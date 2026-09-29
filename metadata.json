@@ -1,0 +1,6 @@
+{
+  "name": "EQUAL1 Business OS",
+  "description": "EQUAL1 Unified Business Operating System for Mini-Mart, Beauty & Salon Services, POS, Inventory, Booking, and Finance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
