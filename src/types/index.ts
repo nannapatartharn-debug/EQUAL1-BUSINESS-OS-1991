@@ -280,7 +280,7 @@ export interface StaffPinAccount {
   id: string;
   name: string;
   role: UserRole;
-  pin: string;
+  pin?: string;
   pin_hash?: string;
   avatar?: string;
   active: boolean;
@@ -468,6 +468,69 @@ export interface StaffActivityLog {
   title: string;
   detail?: string;
   branch_name?: string;
+}
+
+// ----------------------------------------------------
+// EQUAL1 Production Hardening & Event Architecture
+// ----------------------------------------------------
+
+export type RuntimeEnvironmentMode = 'LIVE' | 'TEST';
+
+export type BusinessEventType =
+  | 'customer.created'
+  | 'booking.created'
+  | 'booking.confirmed'
+  | 'booking.cancelled'
+  | 'order.created'
+  | 'order.paid'
+  | 'payment.completed'
+  | 'stock.low'
+  | 'stock.adjusted'
+  | 'task.created'
+  | 'task.completed'
+  | 'notification.created';
+
+export interface BusinessEvent {
+  id: string;
+  type: BusinessEventType;
+  created_at: string;
+  organization_id: string;
+  branch_id: string;
+  actor_id?: string;
+  actor_name?: string;
+  payload: Record<string, unknown>;
+}
+
+export interface PosCheckoutRequest {
+  branch_id: string;
+  organization_id: string;
+  items: {
+    product_id: string;
+    quantity: number;
+    unit_price: number;
+    sku?: string;
+    name?: string;
+  }[];
+  payment_method: PaymentMethod;
+  payment_status: PaymentStatus;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  discount: number;
+  idempotency_key: string;
+  channel?: 'pos' | 'delivery' | 'pickup' | 'app';
+  cashier_id?: string;
+  cashier_name?: string;
+  is_test?: boolean;
+}
+
+export interface PosCheckoutResponse {
+  success: boolean;
+  sale: Sale;
+  receipt_number: string;
+  inventory_deductions: InventoryMovement[];
+  audit_entry: AuditLog;
+  event: BusinessEvent;
+  error?: string;
 }
 
 

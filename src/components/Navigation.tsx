@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ShoppingBag,
   Store,
@@ -24,8 +24,9 @@ import {
   Zap,
 } from 'lucide-react';
 import { Language, getTranslation } from '../lib/i18n';
-import { UserRole, StyleGuideTheme } from '../types';
+import { UserRole, StyleGuideTheme, RuntimeEnvironmentMode } from '../types';
 import { THEMES } from '../lib/theme';
+import { runtimeManager } from '../lib/backendEngine';
 
 interface NavigationProps {
   currentView: string;
@@ -72,6 +73,7 @@ export const Navigation: React.FC<NavigationProps> = ({
 }) => {
   const t = (key: string) => getTranslation(currentLang, key);
   const theme = THEMES[currentTheme];
+  const [runtimeMode, setRuntimeMode] = useState<RuntimeEnvironmentMode>(runtimeManager.getMode());
 
   const handleRoleSelectChange = (newRole: UserRole) => {
     if (newRole === 'owner') {
@@ -167,6 +169,24 @@ export const Navigation: React.FC<NavigationProps> = ({
               <option value="ja" className="text-black bg-white">🇯🇵 JA</option>
             </select>
           </div>
+
+          {/* RUNTIME ENVIRONMENT INDICATOR & TOGGLE (LIVE vs TEST) */}
+          <button
+            onClick={() => {
+              const next = runtimeMode === 'LIVE' ? 'TEST' : 'LIVE';
+              runtimeManager.setMode(next);
+              setRuntimeMode(next);
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border transition cursor-pointer ${
+              runtimeMode === 'LIVE'
+                ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
+            }`}
+            title="สลับโหมดสภาพแวดล้อม: LIVE (Supabase Cloud) / TEST (Sandbox)"
+          >
+            <span className={`w-2 h-2 rounded-full ${runtimeMode === 'LIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <span>{runtimeMode === 'LIVE' ? '🔴 LIVE' : '🟡 TEST'}</span>
+          </button>
 
           {/* OWNER STATUS & STRICT SEPARATION BUTTONS */}
           {isOwnerAuthenticated ? (

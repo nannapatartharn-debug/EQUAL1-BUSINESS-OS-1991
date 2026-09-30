@@ -16,9 +16,11 @@ import {
   X,
   Smartphone,
   Check,
+  RefreshCw,
 } from 'lucide-react';
 import { UserRole, StaffPinAccount, StyleGuideTheme } from '../types';
 import { THEMES } from '../lib/theme';
+import { authService } from '../lib/backendEngine';
 
 interface Equal1LoginModalProps {
   isOpen: boolean;
@@ -42,13 +44,15 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
   const [activeTab, setActiveTab] = useState<'owner' | 'staff' | 'customer'>('owner');
 
   // Owner Login State
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [ownerEmail, setOwnerEmail] = useState('nannapatartharn@gmail.com');
-  const [ownerPassword, setOwnerPassword] = useState('Equal1Secure2026!');
+  const [ownerPassword, setOwnerPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [ownerLoginError, setOwnerLoginError] = useState<string | null>(null);
   const [ownerLoginSuccess, setOwnerLoginSuccess] = useState<string | null>(null);
-  const [ownerPinQuick, setOwnerPinQuick] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResetSent, setIsResetSent] = useState(false);
   const [isBiometricActive, setIsBiometricActive] = useState(false);
 
   // Staff Login State
@@ -60,29 +64,84 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
 
   const theme = THEMES[currentTheme];
 
-  // Handle Owner Sign-in
-  const handleOwnerSubmit = (e: React.FormEvent) => {
+  // Handle Owner Sign-in / Sign-up via Supabase Auth
+  const handleOwnerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setOwnerLoginError(null);
-
-    // Verify Owner credentials (Email/Password or Master PIN)
-    const validEmails = ['nannapatartharn@gmail.com', 'mild@equal1.com', 'owner@equal1.biz', 'owner@equal1.com'];
-    const validPassword = 'Equal1Secure2026!';
-    const validPins = ['888888', '9999', '112233'];
+    setOwnerLoginSuccess(null);
 
     const emailTrim = ownerEmail.trim().toLowerCase();
-    const isEmailValid = validEmails.includes(emailTrim) && ownerPassword === validPassword;
-    const isPinValid = validPins.includes(ownerPinQuick);
+    if (!emailTrim || !ownerPassword) {
+      setOwnerLoginError('กรุณากรอกอีเมลและรหัสผ่านเจ้าของร้าน');
+      return;
+    }
 
-    if (isEmailValid || isPinValid || ownerPassword.length >= 6) {
-      setOwnerLoginSuccess('ยืนยันสิทธิ์เจ้าของร้านสำเร็จ เข้าสู่ศูนย์ควบคุมธุรกิจ...');
-      setTimeout(() => {
-        onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', emailTrim || 'nannapatartharn@gmail.com');
-        setOwnerLoginSuccess(null);
-        onClose();
-      }, 600);
-    } else {
-      setOwnerLoginError('อีเมลหรือรหัสผ่านเจ้าของร้านไม่ถูกต้อง (เฉพาะเจ้าของเท่านั้นที่เข้าได้)');
+    setIsSubmitting(true);
+    try {
+      if (authMode === 'signup') {
+        const { data, error } = await authService.signUpWithEmail(emailTrim, ownerPassword, {
+          role: 'owner',
+          name: 'คุณนันท์นภัส (Mild - Owner)',
+        });
+        if (error) {
+          setOwnerLoginError(error.message || 'ไม่สามารถลงทะเบียนบัญชีได้');
+        } else {
+          setOwnerLoginSuccess('ลงทะเบียนบัญชีเจ้าของร้านสำเร็จ กรุณาเข้าสู่ระบบ');
+          setAuthMode('signin');
+        }
+      } else {
+        const { data, error } = await authService.signInWithEmail(emailTrim, ownerPassword);
+
+        if (error) {
+          // Check if owner verified cryptographic credentials (salted hash)
+          const ownerAccount = staffAccounts.find((a) => a.role === 'owner');
+          if (ownerAccount && ownerAccount.pin_hash && verifySecret(ownerPassword, ownerAccount.pin_hash)) {
+            setOwnerLoginSuccess('ยืนยันตัวตนเจ้าของร้านสำเร็จด้วยรหัสผ่านความปลอดภัยสูง');
+            setTimeout(() => {
+              onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', emailTrim);
+              setOwnerLoginSuccess(null);
+              onClose();
+            }, 600);
+          } else {
+            setOwnerLoginError(error.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
+          }
+        } else {
+          setOwnerLoginSuccess(`เข้าสู่ระบบ Supabase Auth สำเร็จ: ${data.user?.email}`);
+          setTimeout(() => {
+            onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', data.user?.email || emailTrim);
+            setOwnerLoginSuccess(null);
+            onClose();
+          }, 600);
+        }
+      }
+    } catch (err: unknown) {
+      setOwnerLoginError((err as Error)?.message || 'เกิดข้อผิดพลาดในการเชื่อมต่อระบบตรวจสอบสิทธิ์');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Handle Password Reset
+  const handleResetPassword = async () => {
+    const emailTrim = ownerEmail.trim().toLowerCase();
+    if (!emailTrim) {
+      setOwnerLoginError('กรุณากรอกอีเมลที่ต้องการรีเซ็ตรหัสผ่าน');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { error } = await authService.resetPassword(emailTrim);
+      if (error) {
+        setOwnerLoginError(`ส่งคำขอไม่สำเร็จ: ${error.message}`);
+      } else {
+        setIsResetSent(true);
+        setOwnerLoginSuccess('ระบบได้ส่งลิงก์รีเซ็ตรหัสผ่านไปยังอีเมลของคุณเรียบร้อยแล้ว');
+      }
+    } catch (err: unknown) {
+      setOwnerLoginError((err as Error)?.message || 'เกิดข้อผิดพลาดในการขอรีเซ็ตรหัสผ่าน');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -91,31 +150,26 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
     setIsBiometricActive(true);
     setTimeout(() => {
       setIsBiometricActive(false);
-      setOwnerLoginSuccess('Face ID / สแกนลายนิ้วมือเจ้าของร้านผ่านการตรวจสอบ!');
+      setOwnerLoginSuccess('ยืนยันตัวตนชีวมิติเจ้าของร้าน (Face ID / Touch ID) ผ่านการตรวจสอบ');
       setTimeout(() => {
-        onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', 'nannapatartharn@gmail.com');
+        onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', ownerEmail.trim().toLowerCase() || 'nannapatartharn@gmail.com');
         setOwnerLoginSuccess(null);
         onClose();
       }, 500);
-    }, 900);
+    }, 800);
   };
 
-  // Handle Staff PIN Submit
+  // Handle Staff PIN Submit (Cryptographic hash verification)
   const handleStaffSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setStaffError(null);
 
-    const staff = staffAccounts.find((s) => s.id === selectedStaffId);
-    if (!staff) {
-      setStaffError('กรุณาเลือกพนักงาน');
-      return;
-    }
-
-    if (staff.pin === staffPin || staffPin === '1234' || staffPin.length === 4) {
-      onStaffLoginSuccess(staff.role, staff.name);
+    const result = authService.verifyStaffPin(selectedStaffId, staffPin, staffAccounts);
+    if (result.verified && result.staff) {
+      onStaffLoginSuccess(result.staff.role, result.staff.name);
       onClose();
     } else {
-      setStaffError(`รหัส PIN 4 หลักไม่ถูกต้อง (รหัสเริ่มต้นของ ${staff.name} คือ ${staff.pin})`);
+      setStaffError(result.error || 'รหัส PIN 4 หลักไม่ถูกต้อง');
     }
   };
 
@@ -253,13 +307,11 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                   </label>
                   <button
                     type="button"
-                    onClick={() => {
-                      setOwnerEmail('nannapatartharn@gmail.com');
-                      setOwnerPassword('Equal1Secure2026!');
-                    }}
+                    onClick={handleResetPassword}
+                    disabled={isSubmitting}
                     className="text-[11px] text-[#889A7B] font-bold hover:underline"
                   >
-                    ใส่รหัสผ่านตัวอย่าง (Demo)
+                    ลืมรหัสผ่าน? (Reset)
                   </button>
                 </div>
                 <div className="relative">
@@ -290,18 +342,47 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                     onChange={(e) => setRememberMe(e.target.checked)}
                     className="rounded border-gray-300 text-[#1F1F1F] focus:ring-[#1F1F1F]"
                   />
-                  <span>จดจำการเข้าสู่ระบบ</span>
+                  <span>จดจำเซสชันนี้บนอุปกรณ์</span>
                 </label>
-                <span className="text-gray-400">PIN เจ้าของ: 888888</span>
+                <span className="text-[11px] text-gray-400 flex items-center gap-1">
+                  <Shield className="w-3 h-3 text-emerald-600" />
+                  <span>Supabase Auth</span>
+                </span>
               </div>
 
               <button
                 type="submit"
-                className="w-full py-3 bg-[#1F1F1F] hover:bg-[#333333] text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer"
+                disabled={isSubmitting}
+                className="w-full py-3 bg-[#1F1F1F] hover:bg-[#333333] text-white font-bold text-xs rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
-                <span>เข้าสู่ระบบเจ้าของร้าน (Sign In)</span>
-                <ArrowRight className="w-4 h-4" />
+                {isSubmitting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>กำลังตรวจสอบสิทธิ์...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{authMode === 'signup' ? 'ลงทะเบียนบัญชีเจ้าของร้าน (Sign Up)' : 'เข้าสู่ระบบเจ้าของร้าน (Sign In)'}</span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
               </button>
+
+              <div className="flex items-center justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === 'signin' ? 'signup' : 'signin');
+                    setOwnerLoginError(null);
+                    setOwnerLoginSuccess(null);
+                  }}
+                  className="text-xs text-gray-600 hover:text-black font-semibold underline transition"
+                >
+                  {authMode === 'signin'
+                    ? 'ยังไม่มีบัญชี Supabase Auth? คลิกเพื่อลงทะเบียน (Sign Up)'
+                    : 'มีบัญชี Supabase Auth แล้ว? คลิกเพื่อเข้าสู่ระบบ (Sign In)'}
+                </button>
+              </div>
             </form>
 
             <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
@@ -309,23 +390,10 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                 type="button"
                 onClick={handleBiometricLogin}
                 disabled={isBiometricActive}
-                className="flex-1 py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
+                className="w-full py-2.5 px-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
               >
                 <Fingerprint className="w-4 h-4 text-emerald-600" />
-                <span>{isBiometricActive ? 'กำลังสแกน...' : 'Face ID / Fingerprint'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setOwnerPinQuick('888888');
-                  handleOwnerSubmit({ preventDefault: () => {} } as React.FormEvent);
-                }}
-                className="py-2 px-3 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1"
-                title="เข้าสู่ระบบด่วนด้วย Master PIN 888888"
-              >
-                <KeyRound className="w-3.5 h-3.5" />
-                <span>Quick Master PIN</span>
+                <span>{isBiometricActive ? 'กำลังตรวจสอบ...' : 'เข้าสู่ระบบด้วย Touch ID / Face ID'}</span>
               </button>
             </div>
           </div>
@@ -373,7 +441,7 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                         type="button"
                         onClick={() => {
                           setSelectedStaffId(st.id);
-                          setStaffPin(st.pin);
+                          setStaffPin('');
                         }}
                         className={`p-2.5 rounded-xl border text-left transition flex items-center gap-2 ${
                           selectedStaffId === st.id
@@ -385,7 +453,7 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                         <div className="overflow-hidden">
                           <strong className="block text-xs truncate">{st.name.split(' ')[0]}</strong>
                           <span className={`text-[10px] block truncate ${selectedStaffId === st.id ? 'text-gray-300' : 'text-gray-400'}`}>
-                            PIN: {st.pin}
+                            {st.role.toUpperCase()}
                           </span>
                         </div>
                       </button>

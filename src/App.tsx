@@ -66,6 +66,7 @@ import { TeamOsManager } from './components/TeamOsManager';
 import { Equal1LoginModal } from './components/Equal1LoginModal';
 import { OwnerAuthChallengeModal } from './components/OwnerAuthChallengeModal';
 import { supabase } from './lib/supabase';
+import { authService, businessService, runtimeManager, TENANT_CONFIG } from './lib/backendEngine';
 import {
   TrendingUp,
   Store,
@@ -375,8 +376,31 @@ export default function App() {
     }
   };
 
-  // Attempt live hydration from Supabase if connected
+  // Attempt live hydration from Supabase and restore persistent session if connected
   useEffect(() => {
+    // 1. Session Persistence & Auto-Refresh check
+    const checkSession = async () => {
+      try {
+        const { session } = await authService.getSession();
+        if (session?.user) {
+          setIsOwnerAuthenticated(true);
+          setCurrentStaffName(`เจ้าของร้าน (${session.user.email})`);
+        }
+      } catch (err) {
+        console.warn('Session restoration note:', err);
+      }
+    };
+    checkSession();
+
+    // 2. Real Auth state transition listener
+    const { data: authListener } = authService.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_IN' && session) {
+        setIsOwnerAuthenticated(true);
+      } else if (event === 'SIGNED_OUT') {
+        setIsOwnerAuthenticated(false);
+      }
+    });
+
     const hydrateData = async () => {
       try {
         const { data: dbProducts, error: prodErr } = await supabase
@@ -424,6 +448,10 @@ export default function App() {
     };
 
     hydrateData();
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
   }, []);
 
   // Transaction Event Handlers

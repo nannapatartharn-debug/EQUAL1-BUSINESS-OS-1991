@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Product, CartItem, PaymentMethod, Sale, Customer, HeldBill } from '../types';
 import { supabase } from '../lib/supabase';
+import { businessService, runtimeManager, TENANT_CONFIG } from '../lib/backendEngine';
 import { Language, getTranslation } from '../lib/i18n';
 import {
   PauseCircle,
@@ -302,84 +303,59 @@ export const PosTerminal: React.FC<PosTerminalProps> = ({
     setErrorMessage(null);
 
     const idempotencyKey = 'pos-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
-    const saleId = 'SALE-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + Math.floor(1000 + Math.random() * 9000);
-    const receiptNumber = 'REC-' + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '-' + Math.floor(1000 + Math.random() * 9000);
-
     const customerObj = customers.find((c) => c.id === selectedCustomer);
 
-    const itemsData = cart.map((item, idx) => ({
-      id: `si-${Date.now()}-${idx}`,
-      sale_id: saleId,
-      product_id: item.product.id,
-      name: item.product.name,
-      sku: item.product.sku,
-      quantity: item.quantity,
-      unit_price: item.product.price,
-      unit_cost: item.product.cost,
-      line_total: item.product.price * item.quantity,
-    }));
-
-    // Try executing equal1_pos_checkout RPC on Supabase
     try {
-      const checkoutPayload = {
-        p_branch_id: '00000000-0000-0000-0000-000000000000',
-        p_items: cart.map((c) => ({
-          product_id: c.product.id,
-          quantity: c.quantity,
-          unit_price: c.product.price,
-        })),
-        p_payment_method: paymentMethod,
-        p_payment_status: 'paid',
-        p_customer_id: selectedCustomer === 'cust-003' ? null : selectedCustomer,
-        p_discount: discountAmount,
-        p_idempotency_key: idempotencyKey,
-      };
+      const checkoutResponse = await businessService.executeAtomicPosCheckout(
+        {
+          organization_id: TENANT_CONFIG.DEFAULT_ORG_ID,
+          branch_id: TENANT_CONFIG.DEFAULT_BRANCH_ID,
+          items: cart.map((c) => ({
+            product_id: c.product.id,
+            quantity: c.quantity,
+            unit_price: c.product.is_flash_sale && c.product.flash_sale_price ? c.product.flash_sale_price : c.product.price,
+            sku: c.product.sku,
+            name: c.product.name,
+          })),
+          payment_method: paymentMethod,
+          payment_status: 'paid',
+          customer_id: selectedCustomer === 'cust-003' ? null : selectedCustomer,
+          customer_name: customerObj?.name || 'ลูกค้าทั่วไปหน้าร้าน',
+          discount: discountAmount,
+          idempotency_key: idempotencyKey,
+          cashier_name: cashierName,
+          channel: 'pos',
+          is_test: !runtimeManager.isLive(),
+        },
+        products
+      );
 
-      const { data, error } = await supabase.rpc('equal1_pos_checkout', checkoutPayload);
+      // Deduct stock in client model with authoritative movement verification
+      const updatedProducts = products.map((prod) => {
+        const cartItem = cart.find((ci) => ci.product.id === prod.id);
+        if (cartItem) {
+          return {
+            ...prod,
+            stock: Math.max(0, prod.stock - cartItem.quantity),
+          };
+        }
+        return prod;
+      });
 
-      if (error && error.code !== '42501' && !error.message?.includes('permission denied')) {
-        console.warn('Supabase equal1_pos_checkout RPC notice:', error.message);
-      }
-    } catch (rpcErr) {
-      console.warn('RPC invocation attempt logged:', rpcErr);
-    }
+      const newSale = checkoutResponse.sale;
 
-    // Deduct stock in client model with authoritative movement verification
-    const updatedProducts = products.map((prod) => {
-      const cartItem = cart.find((ci) => ci.product.id === prod.id);
-      if (cartItem) {
-        return {
-          ...prod,
-          stock: Math.max(0, prod.stock - cartItem.quantity),
-        };
-      }
-      return prod;
-    });
-
-    const newSale: Sale = {
-      id: saleId,
-      created_at: new Date().toISOString(),
-      channel: 'pos',
-      status: 'completed',
-      payment_status: 'paid',
-      payment_method: paymentMethod,
-      subtotal,
-      discount: discountAmount,
-      delivery_fee: 0,
-      total,
-      items: itemsData,
-      customer_name: customerObj?.name || 'Walk-in',
-      receipt_number: receiptNumber,
-    };
-
-    setTimeout(() => {
+      setTimeout(() => {
+        setIsProcessing(false);
+        setIsPaymentOpen(false);
+        setCart([]);
+        setDiscountAmount(0);
+        setCompletedSale(newSale);
+        onSaleCompleted(newSale, updatedProducts);
+      }, 500);
+    } catch (err: unknown) {
       setIsProcessing(false);
-      setIsPaymentOpen(false);
-      setCart([]);
-      setDiscountAmount(0);
-      setCompletedSale(newSale);
-      onSaleCompleted(newSale, updatedProducts);
-    }, 600);
+      setErrorMessage((err as Error)?.message || 'เกิดข้อผิดพลาดในการประมวลผลคำสั่งซื้อ');
+    }
   };
 
   return (
