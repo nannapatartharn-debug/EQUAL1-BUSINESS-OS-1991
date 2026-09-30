@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users,
   Briefcase,
@@ -75,6 +75,8 @@ import { CameraBarcodeScannerModal } from './CameraBarcodeScannerModal';
 interface TeamOsManagerProps {
   currentRole: UserRole;
   currentStaffName: string;
+  isOwnerAuthenticated?: boolean;
+  onRequestOwnerLogin?: () => void;
   employees: EmployeeProfile[];
   onUpdateEmployees: (employees: EmployeeProfile[]) => void;
   tasks: TaskItem[];
@@ -98,6 +100,8 @@ interface TeamOsManagerProps {
 export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
   currentRole,
   currentStaffName,
+  isOwnerAuthenticated = true,
+  onRequestOwnerLogin,
   employees,
   onUpdateEmployees,
   tasks,
@@ -117,13 +121,23 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
   onSendCartToPos,
   onQuickSaleCompleted,
 }) => {
-  // Determine if user has Manager / Owner management access
-  const isManagement = currentRole === 'owner' || currentRole === 'super_admin' || currentRole === 'manager';
+  // Strict Owner Access: The 5 pillars (Approvals, Tasks, Commissions, Audit, Team Control)
+  // are visible ONLY to the Owner! Others have zero access.
+  const isOwner = currentRole === 'owner' && isOwnerAuthenticated !== false;
+  const isManagement = isOwner;
 
-  // Active Tab
+  // Active Tab: Defaults to 'my-work' for staff; only owner defaults to 'team-directory'
   const [activeTab, setActiveTab] = useState<
     'my-work' | 'team-directory' | 'tasks' | 'checklists' | 'approvals' | 'commissions' | 'academy' | 'timeline'
-  >(isManagement ? 'team-directory' : 'my-work');
+  >(isOwner ? 'team-directory' : 'my-work');
+
+  // Guard: if non-owner is somehow on an owner-only tab, revert immediately
+  useEffect(() => {
+    const ownerOnlyTabs = ['team-directory', 'tasks', 'approvals', 'commissions', 'timeline'];
+    if (!isOwner && ownerOnlyTabs.includes(activeTab)) {
+      setActiveTab('my-work');
+    }
+  }, [isOwner, activeTab]);
 
   // Camera Barcode Scanner & Floor Cart state
   const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
@@ -741,13 +755,15 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
             )}
 
             {/* Quick Switch to My Work preview for Owner or Action */}
-            <button
-              onClick={() => setActiveTab(activeTab === 'my-work' ? 'team-directory' : 'my-work')}
-              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-xs border border-white/20 backdrop-blur transition flex items-center gap-1.5"
-            >
-              <Briefcase className="w-3.5 h-3.5 text-[#E6A055]" />
-              <span>{activeTab === 'my-work' ? 'สลับไปมุมมอง Owner (Team Control)' : 'ดูหน้างานของฉัน (My Work)'}</span>
-            </button>
+            {isOwner && (
+              <button
+                onClick={() => setActiveTab(activeTab === 'my-work' ? 'team-directory' : 'my-work')}
+                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-medium text-xs border border-white/20 backdrop-blur transition flex items-center gap-1.5"
+              >
+                <Briefcase className="w-3.5 h-3.5 text-[#E6A055]" />
+                <span>{activeTab === 'my-work' ? 'สลับไปมุมมอง Owner (Team Control)' : 'ดูหน้างานของฉัน (My Work)'}</span>
+              </button>
+            )}
 
             <button
               onClick={() => setIsSubmitRequestOpen(true)}
@@ -759,7 +775,7 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
           </div>
         </div>
 
-        {/* Executive Pulse Strip */}
+        {/* Executive Pulse Strip (Commissions and Pending Approvals strictly for Owner) */}
         <div className="mt-6 pt-5 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
           <div>
             <span className="text-[11px] text-[#A8A499] block font-medium">พนักงานในระบบ</span>
@@ -767,32 +783,52 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
               {totalEmployeesCount} คน <span className="text-emerald-400 text-xs font-normal">(กำลังเข้ากะ {activeWorkingCount})</span>
             </strong>
           </div>
+          {isOwner ? (
+            <>
+              <div>
+                <span className="text-[11px] text-[#A8A499] block font-medium">คำขอรออนุมัติ (Approvals)</span>
+                <strong className={`text-xl font-bold tabular-nums ${pendingApprovalsCount > 0 ? 'text-amber-400' : 'text-white'}`}>
+                  {pendingApprovalsCount} รายการ
+                </strong>
+              </div>
+              <div>
+                <span className="text-[11px] text-[#A8A499] block font-medium">คอมมิชชั่นทีมสะสมวันนี้</span>
+                <strong className="text-xl font-bold text-[#E6A055] tabular-nums">
+                  ฿{todayTotalCommissions.toLocaleString()}
+                </strong>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <span className="text-[11px] text-[#A8A499] block font-medium">สถานะสาขา</span>
+                <strong className="text-base font-bold text-emerald-400">
+                  เปิดให้บริการตามปกติ
+                </strong>
+              </div>
+              <div>
+                <span className="text-[11px] text-[#A8A499] block font-medium">เวลาทำการ</span>
+                <strong className="text-base font-bold text-white">
+                  10:00 - 20:00 น.
+                </strong>
+              </div>
+            </>
+          )}
           <div>
-            <span className="text-[11px] text-[#A8A499] block font-medium">คำขอรออนุมัติ (Approvals)</span>
-            <strong className={`text-xl font-bold tabular-nums ${pendingApprovalsCount > 0 ? 'text-amber-400' : 'text-white'}`}>
-              {pendingApprovalsCount} รายการ
-            </strong>
-          </div>
-          <div>
-            <span className="text-[11px] text-[#A8A499] block font-medium">คอมมิชชั่นทีมสะสมวันนี้</span>
-            <strong className="text-xl font-bold text-[#E6A055] tabular-nums">
-              ฿{todayTotalCommissions.toLocaleString()}
-            </strong>
-          </div>
-          <div>
-            <span className="text-[11px] text-[#A8A499] block font-medium">งานค้างส่งมอบ (Open Tasks)</span>
+            <span className="text-[11px] text-[#A8A499] block font-medium">งานของฉันวันนี้</span>
             <strong className="text-xl font-bold text-white tabular-nums">
-              {tasks.filter((t) => t.status !== 'completed' && t.status !== 'verified').length} งาน
+              {tasks.filter((t) => t.assigned_to_id === currentEmployee.id && t.status !== 'completed').length} งาน
             </strong>
           </div>
         </div>
       </div>
 
-      {/* 2. Interactive Navigation Tabs (Clean Segmented Design) */}
+      {/* 2. Interactive Navigation Tabs (Strict Role-Based Separation) */}
       <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-3 mb-6 border-b border-[#E6E4DD]">
+        {/* COMMON TABS (Visible to all staff) */}
         <button
           onClick={() => setActiveTab('my-work')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
             activeTab === 'my-work'
               ? 'bg-[#171717] text-white shadow-sm'
               : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
@@ -803,32 +839,8 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('team-directory')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
-            activeTab === 'team-directory'
-              ? 'bg-[#171717] text-white shadow-sm'
-              : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5 text-blue-500" />
-          <span>Team Control (ผังพนักงาน &amp; สิทธิ์)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('tasks')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
-            activeTab === 'tasks'
-              ? 'bg-[#171717] text-white shadow-sm'
-              : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
-          }`}
-        >
-          <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
-          <span>Task Management ({tasks.length})</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('checklists')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
             activeTab === 'checklists'
               ? 'bg-[#171717] text-white shadow-sm'
               : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
@@ -839,37 +851,8 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
         </button>
 
         <button
-          onClick={() => setActiveTab('approvals')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
-            activeTab === 'approvals'
-              ? 'bg-[#171717] text-white shadow-sm'
-              : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
-          }`}
-        >
-          <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
-          <span>ศูนย์อนุมัติ (Approvals)</span>
-          {pendingApprovalsCount > 0 && (
-            <span className="w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] flex items-center justify-center font-bold">
-              {pendingApprovalsCount}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('commissions')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
-            activeTab === 'commissions'
-              ? 'bg-[#171717] text-white shadow-sm'
-              : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
-          }`}
-        >
-          <Coins className="w-3.5 h-3.5 text-amber-500" />
-          <span>ระบบคอมมิชชั่น &amp; เงินสด</span>
-        </button>
-
-        <button
           onClick={() => setActiveTab('academy')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
             activeTab === 'academy'
               ? 'bg-[#171717] text-white shadow-sm'
               : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
@@ -879,17 +862,86 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
           <span>EQUAL1 Academy ({trainingCourses.length})</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('timeline')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 ${
-            activeTab === 'timeline'
-              ? 'bg-[#171717] text-white shadow-sm'
-              : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
-          }`}
-        >
-          <Activity className="w-3.5 h-3.5 text-teal-500" />
-          <span>Staff Activity Audit</span>
-        </button>
+        {/* 5 OWNER-ONLY PILLARS (Visible to Owner ONLY) */}
+        {isOwner ? (
+          <>
+            <span className="text-[#CCC] px-1 hidden sm:inline">|</span>
+
+            <button
+              onClick={() => setActiveTab('team-directory')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                activeTab === 'team-directory'
+                  ? 'bg-[#171717] text-white shadow-sm'
+                  : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5 text-blue-500" />
+              <span>👑 Team Control (ผังพนักงาน &amp; สิทธิ์)</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('tasks')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                activeTab === 'tasks'
+                  ? 'bg-[#171717] text-white shadow-sm'
+                  : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
+              }`}
+            >
+              <CheckSquare className="w-3.5 h-3.5 text-emerald-500" />
+              <span>👑 Task Management ({tasks.length})</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('approvals')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                activeTab === 'approvals'
+                  ? 'bg-[#171717] text-white shadow-sm'
+                  : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-500" />
+              <span>👑 ศูนย์อนุมัติ (Approvals)</span>
+              {pendingApprovalsCount > 0 && (
+                <span className="w-4 h-4 rounded-full bg-rose-500 text-white text-[10px] flex items-center justify-center font-bold">
+                  {pendingApprovalsCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveTab('commissions')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                activeTab === 'commissions'
+                  ? 'bg-[#171717] text-white shadow-sm'
+                  : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
+              }`}
+            >
+              <Coins className="w-3.5 h-3.5 text-amber-500" />
+              <span>👑 ระบบคอมมิชชั่น &amp; เงินสด</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('timeline')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition shrink-0 cursor-pointer ${
+                activeTab === 'timeline'
+                  ? 'bg-[#171717] text-white shadow-sm'
+                  : 'text-[#666] hover:text-[#171717] hover:bg-[#F2EFE9]'
+              }`}
+            >
+              <Activity className="w-3.5 h-3.5 text-teal-500" />
+              <span>👑 Staff Activity Audit</span>
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={onRequestOwnerLogin}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium text-gray-400 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 transition cursor-pointer shrink-0 ml-auto"
+            title="พื้นที่หวงห้ามเฉพาะเจ้าของกิจการ (Owner Only)"
+          >
+            <Lock className="w-3 h-3 text-amber-600" />
+            <span>เข้าสู่ระบบเจ้าของเพื่อดู Approvals / Tasks / ค่าคอม / Audit</span>
+          </button>
+        )}
       </div>
 
       {/* ========================================================================= */}
@@ -1276,7 +1328,7 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
       {/* ========================================================================= */}
       {/* TAB 2: TEAM CONTROL (DIRECTORY & GRANULAR PERMISSIONS MATRIX)             */}
       {/* ========================================================================= */}
-      {activeTab === 'team-directory' && (
+      {isOwner && activeTab === 'team-directory' && (
         <div className="space-y-6">
           {/* Controls Bar */}
           <div className="flex flex-wrap items-center justify-between gap-4 bg-white p-4 rounded-3xl border border-[#E6E4DD] shadow-sm">
@@ -1420,7 +1472,7 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
       {/* ========================================================================= */}
       {/* TAB 3: TASKS MANAGEMENT (KANBAN / WORKFLOW TODO -> VERIFIED)              */}
       {/* ========================================================================= */}
-      {activeTab === 'tasks' && (
+      {isOwner && activeTab === 'tasks' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
@@ -1717,7 +1769,7 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
       {/* ========================================================================= */}
       {/* TAB 5: APPROVAL HUB                                                       */}
       {/* ========================================================================= */}
-      {activeTab === 'approvals' && (
+      {isOwner && activeTab === 'approvals' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
@@ -1837,7 +1889,7 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
       {/* ========================================================================= */}
       {/* TAB 6: COMMISSIONS & MONEY                                                */}
       {/* ========================================================================= */}
-      {activeTab === 'commissions' && (
+      {isOwner && activeTab === 'commissions' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
@@ -1949,7 +2001,7 @@ export const TeamOsManager: React.FC<TeamOsManagerProps> = ({
       {/* ========================================================================= */}
       {/* TAB 8: STAFF ACTIVITY TIMELINE                                            */}
       {/* ========================================================================= */}
-      {activeTab === 'timeline' && (
+      {isOwner && activeTab === 'timeline' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>

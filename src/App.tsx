@@ -45,7 +45,9 @@ import {
   CommissionRecord,
   TrainingCourse,
   StaffActivityLog,
+  StyleGuideTheme,
 } from './types';
+import { THEMES } from './lib/theme';
 import { Language, getTranslation } from './lib/i18n';
 import { Navigation } from './components/Navigation';
 import { PosTerminal } from './components/PosTerminal';
@@ -61,6 +63,8 @@ import { PaymentHistorySlipVerification } from './components/PaymentHistorySlipV
 import { MarketingCampaignManager } from './components/MarketingCampaignManager';
 import { AuthSecurityModal } from './components/AuthSecurityModal';
 import { TeamOsManager } from './components/TeamOsManager';
+import { Equal1LoginModal } from './components/Equal1LoginModal';
+import { OwnerAuthChallengeModal } from './components/OwnerAuthChallengeModal';
 import { supabase } from './lib/supabase';
 import {
   TrendingUp,
@@ -83,6 +87,13 @@ export default function App() {
   const [currentView, setCurrentView] = useState<string>('dashboard');
   const [currentLang, setCurrentLang] = useState<Language>('th');
 
+  // Security & Owner Separation states
+  const [isOwnerAuthenticated, setIsOwnerAuthenticated] = useState<boolean>(true);
+  const [currentTheme, setCurrentTheme] = useState<StyleGuideTheme>('minimal_luxury');
+  const [isEqual1LoginOpen, setIsEqual1LoginOpen] = useState<boolean>(false);
+  const [isOwnerChallengeOpen, setIsOwnerChallengeOpen] = useState<boolean>(false);
+  const [targetProtectedView, setTargetProtectedView] = useState<string>('dashboard');
+
   // Application Data States
   const [products, setProducts] = useState<Product[]>(INITIAL_PRODUCTS);
   const [services, setServices] = useState<ServiceItem[]>(INITIAL_SERVICES);
@@ -100,7 +111,7 @@ export default function App() {
   const [vouchers, setVouchers] = useState<PromoVoucher[]>(INITIAL_VOUCHERS);
   const [slipRecords, setSlipRecords] = useState<BankSlipRecord[]>(INITIAL_SLIP_RECORDS);
   const [staffAccounts, setStaffAccounts] = useState<StaffPinAccount[]>(INITIAL_STAFF_PINS);
-  const [currentStaffName, setCurrentStaffName] = useState<string>('คุณพิมพ์พร (Owner & Founder)');
+  const [currentStaffName, setCurrentStaffName] = useState<string>('คุณนันท์นภัส (Mild - Owner)');
   const [activeCustomerId, setActiveCustomerId] = useState<string>('cust-001');
   const [posInitialCart, setPosInitialCart] = useState<CartItem[]>([]);
 
@@ -176,8 +187,52 @@ export default function App() {
     handleSecurityAudit('CUSTOMER_LOGOUT', { previousCustomerId: activeCustomer.id });
   };
 
+  // Owner Logout & Session Lock
+  const handleOwnerLogout = () => {
+    setIsOwnerAuthenticated(false);
+    setCurrentRole('cashier');
+    setCurrentView('pos');
+    handleSecurityAudit('OWNER_LOCK_SESSION', { message: 'เจ้าของร้านล็อคหน้าจอ ซ่อนระบบการเงินและ Dashboard' });
+  };
+
+  const handleOwnerLoginSuccess = (ownerName: string, email: string) => {
+    setIsOwnerAuthenticated(true);
+    setCurrentRole('owner');
+    setCurrentStaffName(ownerName);
+    setCurrentView(targetProtectedView || 'dashboard');
+    setIsEqual1LoginOpen(false);
+    setIsOwnerChallengeOpen(false);
+    handleSecurityAudit('OWNER_LOGIN_SUCCESS', { ownerName, email });
+  };
+
+  const handleStaffLoginSuccess = (role: UserRole, staffName: string) => {
+    setIsOwnerAuthenticated(false);
+    setCurrentRole(role);
+    setCurrentStaffName(staffName);
+    setIsEqual1LoginOpen(false);
+    if (role === 'cashier') setCurrentView('pos');
+    else if (role === 'beauty_staff') setCurrentView('salon-queue');
+    else if (role === 'delivery') setCurrentView('orders-kanban');
+    else if (role === 'stock') setCurrentView('inventory');
+    else setCurrentView('team-os');
+    handleSecurityAudit('STAFF_PIN_LOGIN_SUCCESS', { role, staffName });
+  };
+
+  const handleOwnerVerifySuccess = () => {
+    setIsOwnerAuthenticated(true);
+    setCurrentRole('owner');
+    setCurrentView(targetProtectedView || 'dashboard');
+    setIsOwnerChallengeOpen(false);
+    handleSecurityAudit('OWNER_CHALLENGE_VERIFIED', { targetView: targetProtectedView });
+  };
+
   // Staff Account & Role selection from PIN/Auth modal
   const handleSelectStaffRole = (role: UserRole, staffName: string) => {
+    if (role === 'owner') {
+      setIsOwnerAuthenticated(true);
+    } else {
+      setIsOwnerAuthenticated(false);
+    }
     setCurrentRole(role);
     setCurrentStaffName(staffName);
     if (role === 'customer') {
@@ -286,8 +341,24 @@ export default function App() {
     setAuditLogs((prev) => [auditItem, ...prev]);
   };
 
-  // Sync role change to suitable default view
+  // Protected View Navigation
+  const handleSelectView = (view: string) => {
+    const ownerOnlyViews = ['dashboard', 'finance', 'system-health', 'marketing'];
+    if (ownerOnlyViews.includes(view) && !isOwnerAuthenticated) {
+      setTargetProtectedView(view);
+      setIsOwnerChallengeOpen(true);
+      return;
+    }
+    setCurrentView(view);
+  };
+
+  // Sync role change with Owner Protection
   const handleRoleChange = (role: UserRole) => {
+    if (role === 'owner' && !isOwnerAuthenticated) {
+      setTargetProtectedView('dashboard');
+      setIsOwnerChallengeOpen(true);
+      return;
+    }
     setCurrentRole(role);
     if (role === 'customer') {
       setCurrentView('customer-shop');
@@ -676,7 +747,7 @@ export default function App() {
     ]);
   };
 
-  // AI Proposals Approval
+  // AI Proposals Approval (Owner + Manager Privilege)
   const handleApproveProposal = (proposalId: string) => {
     const prop = aiProposals.find((p) => p.id === proposalId);
     if (!prop) return;
@@ -684,6 +755,24 @@ export default function App() {
     setAiProposals((prev) =>
       prev.map((p) => (p.id === proposalId ? { ...p, status: 'approved' } : p))
     );
+
+    // AI Flash Sale Proposal Approved: Release Flash Sale to Customer App & POS
+    if (prop.id === 'act-000') {
+      setProducts((prev) =>
+        prev.map((prod) => {
+          if (['prod-001', 'prod-002', 'prod-003', 'prod-005', 'prod-007'].includes(prod.id)) {
+            return {
+              ...prod,
+              is_flash_sale: true,
+              flash_sale_price: prod.flash_sale_price || Math.round(prod.price * 0.65),
+              flash_sale_stock_limit: prod.flash_sale_stock_limit || 25,
+              flash_sale_sold_count: prod.flash_sale_sold_count || 12,
+            };
+          }
+          return prod;
+        })
+      );
+    }
 
     // Execute safe mutation based on proposal
     if (prop.type === 'reorder' && prop.dataPayload?.sku) {
@@ -701,11 +790,11 @@ export default function App() {
       {
         id: 'aud-' + Date.now(),
         created_at: new Date().toISOString(),
-        actor_name: 'คุณพิมพ์พร (Owner)',
+        actor_name: 'คุณนันท์นภัส (Owner)',
         action: 'AI_ACTION_APPROVED_AND_EXECUTED',
         entity_type: 'ai_actions',
         entity_id: proposalId,
-        details: { title: prop.title, type: prop.type },
+        details: { title: prop.title, type: prop.type, approved_by: 'Owner + Store Manager' },
       },
       ...prev,
     ]);
@@ -730,12 +819,14 @@ export default function App() {
   const pendingOrdersCount = sales.filter((s) => s.status !== 'completed').length;
   const todayBookingsCount = bookings.filter((b) => b.status === 'confirmed').length;
 
+  const theme = THEMES[currentTheme];
+
   return (
-    <div className="min-h-screen bg-[#FBFBF9] text-[#171717] font-sans antialiased selection:bg-[#E6A055] selection:text-black">
+    <div className={`min-h-screen ${theme.bgMain} ${theme.textPrimary} font-sans antialiased transition-colors duration-200 selection:bg-[#889A7B] selection:text-white`}>
       {/* Top Application Bar */}
       <Navigation
         currentView={currentView}
-        onSelectView={(v) => setCurrentView(v)}
+        onSelectView={handleSelectView}
         currentRole={currentRole}
         currentStaffName={currentStaffName}
         onChangeRole={handleRoleChange}
@@ -747,6 +838,14 @@ export default function App() {
         cartCount={customerCart.reduce((sum, i) => sum + i.quantity, 0)}
         onOpenAuthSecurity={() => setIsAuthModalOpen(true)}
         isSessionLocked={isSessionLocked}
+        isOwnerAuthenticated={isOwnerAuthenticated}
+        onRequestOwnerLogin={() => {
+          setTargetProtectedView('dashboard');
+          setIsEqual1LoginOpen(true);
+        }}
+        onOwnerLogout={handleOwnerLogout}
+        currentTheme={currentTheme}
+        onChangeTheme={(t) => setCurrentTheme(t)}
       />
 
       {/* Main App View Routing */}
@@ -777,6 +876,26 @@ export default function App() {
           /* BACKOFFICE & OWNER VIEWS */
           <>
             {currentView === 'dashboard' && (
+              !isOwnerAuthenticated ? (
+                <div className="max-w-md mx-auto my-16 bg-white p-8 rounded-3xl border border-gray-200 shadow-xl text-center space-y-4">
+                  <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto shadow-inner">
+                    <Lock className="w-8 h-8" />
+                  </div>
+                  <h2 className="text-xl font-black text-[#1F1F1F]">ระบบเจ้าของร้าน (Owner Restricted)</h2>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    พื้นที่นี้สงวนสิทธิ์เฉพาะเจ้าของกิจการเท่านั้น เพื่อรักษาความลับของตัวเลขยอดขายและผลกำไร กรุณาเข้าสู่ระบบด้วยบัญชีเจ้าของร้าน
+                  </p>
+                  <button
+                    onClick={() => {
+                      setTargetProtectedView('dashboard');
+                      setIsEqual1LoginOpen(true);
+                    }}
+                    className="w-full py-3 bg-[#1F1F1F] hover:bg-black text-white text-xs font-bold rounded-xl shadow transition cursor-pointer"
+                  >
+                    เข้าสู่ระบบเจ้าของร้าน (Sign In)
+                  </button>
+                </div>
+              ) : (
               <div className="max-w-7xl mx-auto px-4 py-8">
                 {/* Executive Welcome & Pulse */}
                 <div className="bg-[#171717] text-[#FAF8F5] rounded-3xl p-6 sm:p-8 shadow-xl mb-8 relative overflow-hidden">
@@ -1027,12 +1146,17 @@ export default function App() {
                   </div>
                 </div>
               </div>
-            )}
+            ))}
 
             {currentView === 'team-os' && (
               <TeamOsManager
                 currentRole={currentRole}
                 currentStaffName={currentStaffName}
+                isOwnerAuthenticated={isOwnerAuthenticated}
+                onRequestOwnerLogin={() => {
+                  setTargetProtectedView('team-os');
+                  setIsEqual1LoginOpen(true);
+                }}
                 employees={employees}
                 onUpdateEmployees={setEmployees}
                 tasks={tasks}
@@ -1179,6 +1303,39 @@ export default function App() {
         isLocked={isSessionLocked}
         onUnlockSession={() => setIsSessionLocked(false)}
         onLockSession={() => setIsSessionLocked(true)}
+      />
+
+      {/* EQUAL1 Master Login Modal */}
+      <Equal1LoginModal
+        isOpen={isEqual1LoginOpen}
+        onClose={() => setIsEqual1LoginOpen(false)}
+        onOwnerLoginSuccess={handleOwnerLoginSuccess}
+        onStaffLoginSuccess={handleStaffLoginSuccess}
+        onCustomerLoginSuccess={() => {
+          setIsOwnerAuthenticated(false);
+          setCurrentRole('customer');
+          setCurrentView('customer-shop');
+        }}
+        staffAccounts={staffAccounts}
+        currentTheme={currentTheme}
+      />
+
+      {/* Owner Protected Challenge Modal */}
+      <OwnerAuthChallengeModal
+        isOpen={isOwnerChallengeOpen}
+        onClose={() => setIsOwnerChallengeOpen(false)}
+        onVerifySuccess={handleOwnerVerifySuccess}
+        targetFeatureName={
+          targetProtectedView === 'dashboard'
+            ? 'ศูนย์ควบคุมธุรกิจเจ้าของร้าน (Owner Executive OS)'
+            : targetProtectedView === 'finance'
+            ? 'การเงิน & ผลกำไร (Financial Dashboard)'
+            : targetProtectedView === 'marketing'
+            ? 'จัดการแคมเปญ & ปล่อยโปรโมชั่น (Marketing & Flash Sale)'
+            : targetProtectedView === 'team-os'
+            ? 'ศูนย์อนุมัติ & บริหารทีมงาน (Approvals & Team Control)'
+            : 'ระบบเจ้าของร้าน'
+        }
       />
     </div>
   );

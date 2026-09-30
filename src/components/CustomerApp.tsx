@@ -48,6 +48,7 @@ import {
   BankSlipRecord,
 } from '../types';
 import { Language, getTranslation } from '../lib/i18n';
+import { FlashSaleBanner } from './FlashSaleBanner';
 import {
   hashSync,
   verifySecret,
@@ -356,7 +357,12 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      const matchCat = selectedProductCategory === 'all' || p.category === selectedProductCategory;
+      const matchCat =
+        selectedProductCategory === 'all'
+          ? true
+          : selectedProductCategory === 'flash_sale'
+          ? !!p.is_flash_sale
+          : p.category === selectedProductCategory;
       const q = searchQuery.toLowerCase().trim();
       const matchSearch = !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
       return matchCat && matchSearch && p.active !== false;
@@ -373,8 +379,11 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
   }, [services, selectedServiceCategory, searchQuery]);
 
   // Cart management
-  const handleAddToCart = (product: Product) => {
+  const handleAddToCart = (product: Product, priceOverride?: number) => {
     playTactileHaptic('keypad');
+    const effectivePrice = priceOverride || (product.is_flash_sale && product.flash_sale_price ? product.flash_sale_price : product.price);
+    const targetProduct = { ...product, price: effectivePrice };
+
     const existing = cart.find((item) => item.product.id === product.id);
     if (existing) {
       onUpdateCart(
@@ -383,7 +392,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
         )
       );
     } else {
-      onUpdateCart([...cart, { product, quantity: 1 }]);
+      onUpdateCart([...cart, { product: targetProduct, quantity: 1 }]);
     }
   };
 
@@ -864,6 +873,9 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
       {/* ==================================================== */}
       {activeTab === 'shop' && (
         <div className="space-y-6">
+          {/* Live Flash Sale Hero Section */}
+          <FlashSaleBanner products={products} onAddToCart={handleAddToCart} />
+
           {/* Active Marketing Campaign Hero Carousel */}
           {campaigns.filter((c) => c.active).length > 0 && (
             <div className="overflow-x-auto no-scrollbar pb-1">
@@ -938,7 +950,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
             <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 text-xs">
               <button
                 onClick={() => setSelectedProductCategory('all')}
-                className={`px-3.5 py-1.5 rounded-full font-medium whitespace-nowrap transition ${
+                className={`px-3.5 py-1.5 rounded-full font-medium whitespace-nowrap transition cursor-pointer ${
                   selectedProductCategory === 'all'
                     ? 'bg-[#171717] text-white'
                     : 'bg-[#F2EFE9] text-[#555] hover:bg-[#E5E1D6]'
@@ -946,11 +958,27 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
               >
                 ทั้งหมด
               </button>
+
+              {/* Flash Sale Pill */}
+              <button
+                onClick={() => setSelectedProductCategory('flash_sale')}
+                className={`px-3.5 py-1.5 rounded-full font-bold whitespace-nowrap transition flex items-center gap-1.5 cursor-pointer ${
+                  selectedProductCategory === 'flash_sale'
+                    ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-black shadow-md font-black'
+                    : 'bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200'
+                }`}
+              >
+                <span>⚡ Flash Sale</span>
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-mono font-bold">
+                  {products.filter((p) => p.is_flash_sale).length}
+                </span>
+              </button>
+
               {productCategories.map((c) => (
                 <button
                   key={c}
                   onClick={() => setSelectedProductCategory(c)}
-                  className={`px-3.5 py-1.5 rounded-full font-medium whitespace-nowrap transition ${
+                  className={`px-3.5 py-1.5 rounded-full font-medium whitespace-nowrap transition cursor-pointer ${
                     selectedProductCategory === c
                       ? 'bg-[#171717] text-white'
                       : 'bg-[#F2EFE9] text-[#555] hover:bg-[#E5E1D6]'
@@ -967,6 +995,7 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
             {filteredProducts.map((p) => {
               const inCart = cart.find((c) => c.product.id === p.id);
               const isOut = p.stock <= 0;
+              const isFlash = p.is_flash_sale && p.flash_sale_price;
 
               return (
                 <div
@@ -982,6 +1011,14 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                       />
                     ) : (
                       <span className="text-3xl font-black text-[#A8A499]">1M</span>
+                    )}
+
+                    {/* Flash Sale Tag */}
+                    {isFlash && (
+                      <div className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-rose-600 text-white font-black text-[9px] shadow-sm flex items-center gap-1 animate-pulse">
+                        <span>⚡ Flash</span>
+                        <span>-{Math.round(((p.price - (p.flash_sale_price || p.price)) / p.price) * 100)}%</span>
+                      </div>
                     )}
 
                     {isOut ? (
@@ -1006,9 +1043,20 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
 
                   <div className="mt-3 pt-3 border-t border-[#F0ECE1] flex items-center justify-between">
                     <div>
-                      <span className="text-lg font-black text-[#111111]">
-                        ฿{p.price.toLocaleString()}
-                      </span>
+                      {isFlash ? (
+                        <div className="flex flex-col">
+                          <span className="text-lg font-black text-rose-600 font-mono">
+                            ฿{(p.flash_sale_price || p.price).toLocaleString()}
+                          </span>
+                          <span className="text-xs text-gray-400 line-through font-mono">
+                            ฿{p.price.toLocaleString()}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-lg font-black text-[#111111]">
+                          ฿{p.price.toLocaleString()}
+                        </span>
+                      )}
                     </div>
 
                     {isOut ? (
@@ -1017,24 +1065,28 @@ export const CustomerApp: React.FC<CustomerAppProps> = ({
                       <div className="flex items-center gap-1.5 bg-[#FAF9F5] border border-[#DDD9CE] rounded-lg p-0.5">
                         <button
                           onClick={() => handleUpdateCartQty(p.id, -1)}
-                          className="w-6 h-6 flex items-center justify-center text-xs font-bold text-gray-700 hover:bg-gray-200 rounded"
+                          className="w-6 h-6 flex items-center justify-center text-xs font-bold text-gray-700 hover:bg-gray-200 rounded cursor-pointer"
                         >
                           -
                         </button>
                         <span className="text-xs font-bold px-1">{inCart.quantity}</span>
                         <button
                           onClick={() => handleUpdateCartQty(p.id, 1)}
-                          className="w-6 h-6 flex items-center justify-center text-xs font-bold text-gray-700 hover:bg-gray-200 rounded"
+                          className="w-6 h-6 flex items-center justify-center text-xs font-bold text-gray-700 hover:bg-gray-200 rounded cursor-pointer"
                         >
                           +
                         </button>
                       </div>
                     ) : (
                       <button
-                        onClick={() => handleAddToCart(p)}
-                        className="px-3 py-1.5 bg-[#171717] hover:bg-[#2C2A26] text-white text-xs font-bold rounded-xl shadow-sm transition active:scale-95"
+                        onClick={() => handleAddToCart(p, isFlash ? p.flash_sale_price : undefined)}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-xl shadow-sm transition active:scale-95 cursor-pointer ${
+                          isFlash
+                            ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-black font-extrabold'
+                            : 'bg-[#171717] hover:bg-[#2C2A26] text-white'
+                        }`}
                       >
-                        + ใส่ตะกร้า
+                        {isFlash ? 'คว้าดีล ⚡' : '+ ใส่ตะกร้า'}
                       </button>
                     )}
                   </div>

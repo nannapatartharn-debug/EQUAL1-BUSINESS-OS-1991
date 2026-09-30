@@ -439,6 +439,16 @@ export const INITIAL_AUDIT: AuditLog[] = [
 
 export const INITIAL_AI_ACTIONS: AiActionProposal[] = [
   {
+    id: 'act-000',
+    type: 'promotion',
+    title: '⚡ AI นำเสนอ: ปล่อยโปรโมชั่น Flash Sale สินค้าไฮไลท์ (Lash Serum & Matcha Latte)',
+    explanation: 'AI ตรวจพบยอดเข้าชมสินค้ากลุ่ม Beauty & Specialty Drink ในช่วงบ่ายเพิ่มขึ้น 42% การจัด Flash Sale รอบจำกัดเวลา 4 ชั่วโมง จะช่วยเร่งยอดขายทันที',
+    recommendation: 'อนุมัติปล่อย Flash Sale: Lash Serum จาก ฿890 เหลือ ฿590 และ Matcha Latte จาก ฿65 เหลือ ฿39 (สิทธิ์การปล่อยโปรโมชั่นเป็นของ Owner ทำงานร่วมกับผู้จัดการร้าน)',
+    status: 'proposed',
+    dataPayload: { flash_items: ['prod-001', 'prod-002', 'prod-005'], discount_pct: 35 },
+    created_at: new Date().toISOString(),
+  },
+  {
     id: 'act-001',
     type: 'reorder',
     title: 'สั่งซื้อเติมสต๊อก: มัทฉะลาเต้ แท้จากเกียวโต (Iced Matcha)',
