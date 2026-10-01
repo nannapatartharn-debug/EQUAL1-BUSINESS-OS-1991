@@ -209,7 +209,7 @@ export const INITIAL_CUSTOMERS: Customer[] = [
     id: 'cust-001',
     name: 'คุณนันท์นภัส อาธาน',
     phone: '081-234-5678',
-    email: 'nannapatartharn@gmail.com',
+    email: 'customer.vip@equal1.com',
     points: 340,
     tier: '1Service Elite',
     created_at: '2026-09-01T10:00:00Z',

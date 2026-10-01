@@ -130,9 +130,7 @@ export const AuthSecurityModal: React.FC<AuthSecurityModalProps> = ({
 
       // Mode 1: If a specific staff was clicked, verify against them
       if (selectedStaff) {
-        const isMatch =
-          selectedStaff.pin === pinToTest ||
-          verifySecret(pinToTest, selectedStaff.pin_hash || '');
+        const isMatch = !!selectedStaff.pin_hash && verifySecret(pinToTest, selectedStaff.pin_hash);
         if (isMatch) {
           matchedStaff = selectedStaff;
         }
@@ -245,7 +243,7 @@ export const AuthSecurityModal: React.FC<AuthSecurityModalProps> = ({
       return;
     }
 
-    if (oldPin !== targetAccount.pin && !verifySecret(oldPin, targetAccount.pin_hash || '')) {
+    if (!targetAccount.pin_hash || !verifySecret(oldPin, targetAccount.pin_hash)) {
       playTactileHaptic('error');
       setChangePinError('รหัส PIN ปัจจุบันไม่ถูกต้อง');
       return;

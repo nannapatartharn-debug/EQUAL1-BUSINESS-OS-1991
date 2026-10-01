@@ -621,60 +621,77 @@ export default function App() {
     setAuditLogs((prev) => [auditItem, ...prev]);
   };
 
-  const handleAddBooking = (newBooking: Booking) => {
-    setBookings((prev) => [newBooking, ...prev]);
-
-    const auditItem: AuditLog = {
-      id: 'aud-' + Date.now(),
-      created_at: new Date().toISOString(),
-      actor_name: currentRole === 'customer' ? newBooking.customer_name : 'Staff Frontdesk',
-      action: 'BOOKING_CREATED',
-      entity_type: 'bookings',
-      entity_id: newBooking.id,
-      details: {
-        service: newBooking.service_name,
-        time: newBooking.starts_at,
-        technician: newBooking.technician_name,
-      },
-    };
-    setAuditLogs((prev) => [auditItem, ...prev]);
+  const handleCustomerPlaceOrder = (newSale: Sale) => {
+    // Deduct products stock and record movements
+    const updatedProducts = products.map((prod) => {
+      const item = newSale.items?.find((it) => it.product_id === prod.id);
+      if (item) {
+        return {
+          ...prod,
+          stock: Math.max(0, prod.stock - item.quantity),
+        };
+      }
+      return prod;
+    });
+    handleSaleCompleted(newSale, updatedProducts);
   };
 
-  const handleUpdateStock = (productId: string, delta: number, reason: string) => {
+  const handleAddBooking = async (newBooking: Booking) => {
+    try {
+      const result = await businessService.executeAtomicBooking(
+        newBooking,
+        bookings,
+        currentRole === 'customer' ? newBooking.customer_name : currentStaffName,
+        TENANT_CONFIG.DEFAULT_ORG_ID,
+        TENANT_CONFIG.DEFAULT_BRANCH_ID
+      );
+      setBookings((prev) => [result.booking, ...prev]);
+      setAuditLogs((prev) => [result.audit, ...prev]);
+    } catch (err: unknown) {
+      console.warn('Booking collision / warning:', err);
+      // Fallback with audit record
+      setBookings((prev) => [newBooking, ...prev]);
+      const auditItem: AuditLog = {
+        id: 'aud-' + Date.now(),
+        created_at: new Date().toISOString(),
+        actor_name: currentRole === 'customer' ? newBooking.customer_name : currentStaffName,
+        action: 'BOOKING_CREATED',
+        entity_type: 'bookings',
+        entity_id: newBooking.id,
+        details: {
+          service: newBooking.service_name,
+          time: newBooking.starts_at,
+          technician: newBooking.technician_name,
+        },
+      };
+      setAuditLogs((prev) => [auditItem, ...prev]);
+    }
+  };
+
+  const handleUpdateStock = async (productId: string, delta: number, reason: string) => {
     const prod = products.find((p) => p.id === productId);
     if (!prod) return;
 
-    const before = prod.stock;
-    const after = Math.max(0, before + delta);
+    try {
+      const result = await businessService.executeAtomicInventoryAdjustment(
+        productId,
+        prod.stock,
+        delta,
+        reason,
+        currentStaffName,
+        currentRole,
+        TENANT_CONFIG.DEFAULT_ORG_ID,
+        TENANT_CONFIG.DEFAULT_BRANCH_ID
+      );
 
-    setProducts((prev) =>
-      prev.map((p) => (p.id === productId ? { ...p, stock: after } : p))
-    );
-
-    const newMovement: InventoryMovement = {
-      id: 'mov-' + Date.now(),
-      created_at: new Date().toISOString(),
-      product_id: productId,
-      product_name: prod.name,
-      sku: prod.sku,
-      quantity: delta,
-      before_stock: before,
-      after_stock: after,
-      reason,
-      user_name: 'คุณพิมพ์พร (Owner)',
-    };
-    setMovements((prev) => [newMovement, ...prev]);
-
-    const newAudit: AuditLog = {
-      id: 'aud-' + Date.now(),
-      created_at: new Date().toISOString(),
-      actor_name: 'คุณพิมพ์พร (Owner)',
-      action: 'STOCK_ADJUSTMENT',
-      entity_type: 'products',
-      entity_id: productId,
-      details: { before, delta, after, reason },
-    };
-    setAuditLogs((prev) => [newAudit, ...prev]);
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, stock: result.newStock } : p))
+      );
+      setMovements((prev) => [result.movement, ...prev]);
+      setAuditLogs((prev) => [result.audit, ...prev]);
+    } catch (err: unknown) {
+      console.warn('Inventory adjustment rejected by backend rules:', err);
+    }
   };
 
   const handleAddProduct = (newProduct: Product) => {
@@ -889,7 +906,7 @@ export default function App() {
             bookings={bookings}
             cart={customerCart}
             onUpdateCart={(newCart) => setCustomerCart(newCart)}
-            onPlaceOrder={(newSale) => handleSaleCompleted(newSale, products)}
+            onPlaceOrder={handleCustomerPlaceOrder}
             onCreateBooking={handleAddBooking}
             lang={currentLang}
             campaigns={campaigns}

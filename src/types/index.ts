@@ -141,6 +141,17 @@ export type BookingStatus =
   | 'no_show'
   | 'rescheduled';
 
+export type DepositStatus =
+  | 'NOT_REQUIRED'
+  | 'PENDING'
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'VERIFIED'
+  | 'REJECTED'
+  | 'REFUNDED'
+  | 'FORFEITED'
+  | 'APPLIED';
+
 export interface Booking {
   id: string;
   created_at: string;
@@ -154,6 +165,9 @@ export interface Booking {
   technician_id?: string;
   status: BookingStatus;
   price: number;
+  deposit_status?: DepositStatus;
+  deposit_amount?: number;
+  deposit_slip_url?: string;
   notes?: string;
 }
 
@@ -477,6 +491,9 @@ export interface StaffActivityLog {
 export type RuntimeEnvironmentMode = 'LIVE' | 'TEST';
 
 export type BusinessEventType =
+  | 'auth.login.success'
+  | 'auth.login.failed'
+  | 'auth.logout'
   | 'customer.created'
   | 'booking.created'
   | 'booking.confirmed'
@@ -484,11 +501,33 @@ export type BusinessEventType =
   | 'order.created'
   | 'order.paid'
   | 'payment.completed'
+  | 'payment.failed'
+  | 'deposit.submitted'
+  | 'deposit.verified'
+  | 'deposit.rejected'
   | 'stock.low'
   | 'stock.adjusted'
   | 'task.created'
   | 'task.completed'
-  | 'notification.created';
+  | 'notification.created'
+  | 'notification.read';
+
+export interface NotificationRecord {
+  id: string;
+  recipient_user_id?: string;
+  recipient_role?: UserRole;
+  organization_id: string;
+  branch_id: string;
+  type: string;
+  title: string;
+  message: string;
+  severity: 'info' | 'warning' | 'error' | 'success';
+  related_entity_type?: string;
+  related_entity_id?: string;
+  is_read: boolean;
+  created_at: string;
+  read_at?: string;
+}
 
 export interface BusinessEvent {
   id: string;

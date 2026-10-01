@@ -11,7 +11,6 @@ import {
   Sparkles,
   CheckCircle,
   AlertCircle,
-  Fingerprint,
   ArrowRight,
   X,
   Smartphone,
@@ -45,7 +44,7 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
 
   // Owner Login State
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
-  const [ownerEmail, setOwnerEmail] = useState('nannapatartharn@gmail.com');
+  const [ownerEmail, setOwnerEmail] = useState('');
   const [ownerPassword, setOwnerPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
@@ -53,7 +52,6 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
   const [ownerLoginSuccess, setOwnerLoginSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResetSent, setIsResetSent] = useState(false);
-  const [isBiometricActive, setIsBiometricActive] = useState(false);
 
   // Staff Login State
   const [selectedStaffId, setSelectedStaffId] = useState<string>(staffAccounts[1]?.id || 'usr-cashier-01');
@@ -93,18 +91,7 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
         const { data, error } = await authService.signInWithEmail(emailTrim, ownerPassword);
 
         if (error) {
-          // Check if owner verified cryptographic credentials (salted hash)
-          const ownerAccount = staffAccounts.find((a) => a.role === 'owner');
-          if (ownerAccount && ownerAccount.pin_hash && verifySecret(ownerPassword, ownerAccount.pin_hash)) {
-            setOwnerLoginSuccess('ยืนยันตัวตนเจ้าของร้านสำเร็จด้วยรหัสผ่านความปลอดภัยสูง');
-            setTimeout(() => {
-              onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', emailTrim);
-              setOwnerLoginSuccess(null);
-              onClose();
-            }, 600);
-          } else {
-            setOwnerLoginError(error.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
-          }
+          setOwnerLoginError(error.message || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
         } else {
           setOwnerLoginSuccess(`เข้าสู่ระบบ Supabase Auth สำเร็จ: ${data.user?.email}`);
           setTimeout(() => {
@@ -143,20 +130,6 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  // Handle Biometric Owner Login
-  const handleBiometricLogin = () => {
-    setIsBiometricActive(true);
-    setTimeout(() => {
-      setIsBiometricActive(false);
-      setOwnerLoginSuccess('ยืนยันตัวตนชีวมิติเจ้าของร้าน (Face ID / Touch ID) ผ่านการตรวจสอบ');
-      setTimeout(() => {
-        onOwnerLoginSuccess('คุณนันท์นภัส (Mild - Owner)', ownerEmail.trim().toLowerCase() || 'nannapatartharn@gmail.com');
-        setOwnerLoginSuccess(null);
-        onClose();
-      }, 500);
-    }, 800);
   };
 
   // Handle Staff PIN Submit (Cryptographic hash verification)
@@ -295,7 +268,7 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                     value={ownerEmail}
                     onChange={(e) => setOwnerEmail(e.target.value)}
                     className="w-full pl-10 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium text-gray-900 focus:bg-white focus:border-[#1F1F1F] outline-none transition"
-                    placeholder="nannapatartharn@gmail.com"
+                    placeholder="owner@business.com"
                   />
                 </div>
               </div>
@@ -384,18 +357,6 @@ export const Equal1LoginModal: React.FC<Equal1LoginModalProps> = ({
                 </button>
               </div>
             </form>
-
-            <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={handleBiometricLogin}
-                disabled={isBiometricActive}
-                className="w-full py-2.5 px-3 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
-              >
-                <Fingerprint className="w-4 h-4 text-emerald-600" />
-                <span>{isBiometricActive ? 'กำลังตรวจสอบ...' : 'เข้าสู่ระบบด้วย Touch ID / Face ID'}</span>
-              </button>
-            </div>
           </div>
         )}
 

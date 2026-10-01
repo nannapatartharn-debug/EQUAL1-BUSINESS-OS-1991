@@ -2,16 +2,14 @@ import React, { useState } from 'react';
 import {
   ShieldAlert,
   Lock,
-  KeyRound,
+  Mail,
   Eye,
   EyeOff,
-  Fingerprint,
   X,
   AlertCircle,
   CheckCircle,
 } from 'lucide-react';
 
-import { verifySecret, hashSync } from '../lib/security';
 import { authService } from '../lib/backendEngine';
 
 interface OwnerAuthChallengeModalProps {
@@ -27,78 +25,56 @@ export const OwnerAuthChallengeModal: React.FC<OwnerAuthChallengeModalProps> = (
   onClose,
   onVerifySuccess,
   targetFeatureName = 'ระบบเจ้าของร้าน (Owner System)',
-  ownerEmail = 'nannapatartharn@gmail.com',
+  ownerEmail = '',
 }) => {
-  const [pinOrPassword, setPinOrPassword] = useState('');
+  const [emailInput, setEmailInput] = useState(ownerEmail);
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
-  const [isBiometricScanning, setIsBiometricScanning] = useState(false);
 
   if (!isOpen) return null;
-
-  // Stored cryptographic hash for master verification (zero plaintext)
-  const MASTER_HASH = hashSync('9999');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const val = pinOrPassword.trim();
+    const targetEmail = (emailInput || ownerEmail).trim().toLowerCase();
+    const val = password.trim();
+
+    if (!targetEmail) {
+      setError('กรุณากรอกอีเมลเจ้าของร้าน');
+      return;
+    }
+
     if (!val) {
-      setError('กรุณากรอกรหัสผ่านหรือ PIN ยืนยันสิทธิ์เจ้าของร้าน');
+      setError('กรุณากรอกรหัสผ่านยืนยันสิทธิ์เจ้าของร้าน');
       return;
     }
 
     setIsVerifying(true);
     try {
-      // 1. Try Supabase Auth password verification
-      if (val.length >= 6) {
-        const { error: authErr } = await authService.signInWithEmail(ownerEmail, val);
-        if (!authErr) {
-          setSuccess('ยืนยันรหัสผ่านเจ้าของร้านผ่าน Supabase Auth สำเร็จ');
-          setTimeout(() => {
-            onVerifySuccess();
-            onClose();
-            setSuccess(null);
-            setPinOrPassword('');
-          }, 500);
-          return;
-        }
-      }
-
-      // 2. Try Cryptographic Master Hash verification
-      if (verifySecret(val, MASTER_HASH) || val.length >= 6) {
-        setSuccess('ยืนยันรหัสเจ้าของร้านถูกต้อง ปลดล็อคระบบเรียบร้อย');
+      // Supabase Auth is the single authoritative source of truth for Owner
+      const { data, error: authErr } = await authService.signInWithEmail(targetEmail, val);
+      if (authErr) {
+        setError(authErr.message || 'รหัสผ่านเจ้าของร้านไม่ถูกต้อง กรุณาตรวจสอบอีกครั้ง');
+      } else if (data?.user) {
+        setSuccess('ยืนยันรหัสผ่านเจ้าของร้านผ่าน Supabase Auth สำเร็จ');
         setTimeout(() => {
           onVerifySuccess();
           onClose();
           setSuccess(null);
-          setPinOrPassword('');
+          setPassword('');
         }, 500);
-        return;
+      } else {
+        setError('ไม่สามารถยืนยันตัวตนเจ้าของร้านได้');
       }
-
-      setError('รหัสผ่านหรือ PIN เจ้าของร้านไม่ถูกต้อง (เฉพาะเจ้าของตัวจริงเท่านั้น)');
     } catch (err: unknown) {
       setError((err as Error)?.message || 'เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์');
     } finally {
       setIsVerifying(false);
     }
-  };
-
-  const handleBiometric = () => {
-    setIsBiometricScanning(true);
-    setTimeout(() => {
-      setIsBiometricScanning(false);
-      setSuccess('ยืนยันตัวตนชีวมิติเจ้าของร้านสำเร็จ');
-      setTimeout(() => {
-        onVerifySuccess();
-        onClose();
-        setSuccess(null);
-      }, 500);
-    }, 700);
   };
 
   return (
@@ -150,20 +126,39 @@ export const OwnerAuthChallengeModal: React.FC<OwnerAuthChallengeModalProps> = (
           )}
 
           <form onSubmit={handleSubmit} className="space-y-3">
+            {!ownerEmail && (
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  อีเมลเจ้าของร้าน (Owner Email)
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="email"
+                    required
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    className="w-full pl-10 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium text-gray-900 focus:bg-white focus:border-[#1F1F1F] outline-none"
+                    placeholder="owner@business.com"
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-bold text-gray-700 mb-1">
-                กรอก Master PIN หรือรหัสผ่านเจ้าของร้าน
+                รหัสผ่านเจ้าของร้าน (Supabase Auth Password)
               </label>
               <div className="relative">
-                <KeyRound className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Lock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   autoFocus
                   required
-                  value={pinOrPassword}
-                  onChange={(e) => setPinOrPassword(e.target.value)}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-medium text-gray-900 focus:bg-white focus:border-[#1F1F1F] outline-none"
-                  placeholder="Master PIN (เช่น 888888) หรือรหัสผ่าน"
+                  placeholder="••••••••••••"
                 />
                 <button
                   type="button"
@@ -177,33 +172,12 @@ export const OwnerAuthChallengeModal: React.FC<OwnerAuthChallengeModalProps> = (
 
             <button
               type="submit"
-              className="w-full py-2.5 bg-[#1F1F1F] hover:bg-[#333333] text-white font-bold text-xs rounded-xl shadow transition cursor-pointer"
+              disabled={isVerifying}
+              className="w-full py-2.5 bg-[#1F1F1F] hover:bg-[#333333] text-white font-bold text-xs rounded-xl shadow transition cursor-pointer disabled:opacity-50"
             >
-              ยืนยันรหัสปลดล็อค (Authorize Owner)
+              {isVerifying ? 'กำลังตรวจสอบสิทธิ์ Supabase Auth...' : 'ยืนยันรหัสปลดล็อค (Authorize Owner)'}
             </button>
           </form>
-
-          <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={handleBiometric}
-              disabled={isBiometricScanning}
-              className="flex-1 py-2 px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5"
-            >
-              <Fingerprint className="w-4 h-4 text-emerald-600" />
-              <span>{isBiometricScanning ? 'กำลังสแกน...' : 'Face ID / Fingerprint'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setPinOrPassword('888888');
-              }}
-              className="py-2 px-3 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-xs rounded-xl transition"
-            >
-              ใส่ PIN 888888
-            </button>
-          </div>
         </div>
       </div>
     </div>

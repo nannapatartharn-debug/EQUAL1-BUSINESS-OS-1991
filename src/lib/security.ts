@@ -56,39 +56,36 @@ export async function hashAsync(text: string, salt = SECURITY_SALT): Promise<str
 }
 
 /**
- * Verify plaintext secret against hashed secret
+ * Verify secret against hashed secret
+ * Strictly requires cryptographic hash match — never accepts plaintext secrets as valid hashes.
  */
-export function verifySecret(input: string, storedHashOrPlain: string): boolean {
-  if (!input) return false;
-  if (input === storedHashOrPlain) return true; // Direct match
+export function verifySecret(input: string, storedHash: string): boolean {
+  if (!input || !storedHash) return false;
   const testHash = hashSync(input);
-  return testHash === storedHashOrPlain;
+  return testHash === storedHash;
 }
 
 /**
- * Find staff member by quick 4-digit PIN in < 2 seconds
- * Preset credentials:
- * - Owner: 9999
- * - Manager: 4444
- * - Cashier: 1234
- * - Stylist: 2345
- * - Delivery: 3456
+ * Find staff member by quick 4-digit PIN via cryptographic hash lookup (< 0.2s)
+ * Verifies strictly against salted hash without plaintext storage.
  */
 export function findStaffByFastPin(pin: string, staffAccounts: StaffPinAccount[]): StaffPinAccount | null {
   if (pin.length !== 4) return null;
-  const match = staffAccounts.find((staff) => staff.active && (staff.pin === pin || verifySecret(pin, staff.pin_hash || '')));
+  const match = staffAccounts.find(
+    (staff) => staff.active && staff.pin_hash && verifySecret(pin, staff.pin_hash)
+  );
   return match || null;
 }
 
 /**
- * Fast Role Preset Directory (for documentation / help modal without exposing in plain text on login screen)
+ * Fast Role Directory (Safe role definitions without exposing credentials or PINs)
  */
 export const ROLE_PRESET_HELP = [
-  { role: 'owner' as UserRole, title: 'Owner & Founder (เจ้าของร้าน)', presetHint: 'เลขมงคล 4 ตัวท้าย (9999)' },
-  { role: 'manager' as UserRole, title: 'Store Manager (ผู้จัดการ)', presetHint: 'เลขซ้ำโฟร์ (4444)' },
-  { role: 'cashier' as UserRole, title: 'Cashier (พนักงานขาย POS)', presetHint: 'เลขเรียง 4 หลัก (1234)' },
-  { role: 'beauty_staff' as UserRole, title: 'Master Stylist (ช่างบริการ)', presetHint: 'เลขเรียงกลาง (2345)' },
-  { role: 'delivery' as UserRole, title: 'Delivery Rider (ไรเดอร์จัดส่ง)', presetHint: 'เลขเรียงส่งไว (3456)' },
+  { role: 'owner' as UserRole, title: 'Owner & Founder (เจ้าของร้าน)', description: 'สิทธิ์สูงสุด บริหารจัดการสาขาและการเงิน' },
+  { role: 'manager' as UserRole, title: 'Store Manager (ผู้จัดการ)', description: 'ดูแลภาพรวมสาขา อนุมัติส่วนลด และจัดการสต๊อก' },
+  { role: 'cashier' as UserRole, title: 'Cashier (พนักงานขาย POS)', description: 'ระบบจุดขาย ชำระเงิน และเปิด/ปิดกะเงินสด' },
+  { role: 'beauty_staff' as UserRole, title: 'Master Stylist (ช่างบริการ)', description: 'คิวบริการซาลอนและบันทึกงานบริการ' },
+  { role: 'delivery' as UserRole, title: 'Delivery Rider (ไรเดอร์จัดส่ง)', description: 'รับออเดอร์เดลิเวอรี่และจัดส่งถึงมือลูกค้า' },
 ];
 
 /**
