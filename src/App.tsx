@@ -65,8 +65,13 @@ import { AuthSecurityModal } from './components/AuthSecurityModal';
 import { TeamOsManager } from './components/TeamOsManager';
 import { Equal1LoginModal } from './components/Equal1LoginModal';
 import { OwnerAuthChallengeModal } from './components/OwnerAuthChallengeModal';
+import { CustomerSupportWorkspace } from './components/CustomerSupportWorkspace';
+import { StaffLearningWorkspace } from './components/StaffLearningWorkspace';
+import { OwnerControlWorkspace } from './components/OwnerControlWorkspace';
+import { OwnerMyAppControl } from './components/OwnerMyAppControl';
 import { supabase } from './lib/supabase';
 import { authService, businessService, runtimeManager, TENANT_CONFIG } from './lib/backendEngine';
+import { SupportThread, SupportMessage, TrainingAssignment } from './types';
 import {
   TrendingUp,
   Store,
@@ -123,6 +128,191 @@ export default function App() {
   const [commissions, setCommissions] = useState<CommissionRecord[]>(INITIAL_COMMISSIONS);
   const [trainingCourses, setTrainingCourses] = useState<TrainingCourse[]>(INITIAL_TRAINING_COURSES);
   const [staffActivities, setStaffActivities] = useState<StaffActivityLog[]>(INITIAL_STAFF_ACTIVITIES);
+
+  // Customer Support & Staff Learning States
+  const [supportThreads, setSupportThreads] = useState<SupportThread[]>([
+    {
+      id: 'th-001',
+      organization_id: TENANT_CONFIG.DEFAULT_ORG_ID,
+      customer_id: 'cust-001',
+      customer_name: 'คุณแพรว (VIP Member)',
+      customer_phone: '081-999-8888',
+      subject: 'สอบถามบริการทำสีผมออร์แกนิค และจองคิวช่างเมย์',
+      status: 'waiting_agent',
+      mode: 'human',
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+      updated_at: new Date(Date.now() - 1800000).toISOString(),
+    },
+    {
+      id: 'th-002',
+      organization_id: TENANT_CONFIG.DEFAULT_ORG_ID,
+      customer_id: 'cust-002',
+      customer_name: 'คุณบอย (Regular)',
+      customer_phone: '089-123-4567',
+      subject: 'ติดตามสถานะออเดอร์เดลิเวอรี่ มินิมาร์ท #ORD-9921',
+      status: 'in_progress',
+      mode: 'human',
+      assigned_to: 'สมศรี (Cashier)',
+      assigned_to_name: 'สมศรี (Senior Cashier & POS)',
+      created_at: new Date(Date.now() - 7200000).toISOString(),
+      updated_at: new Date(Date.now() - 600000).toISOString(),
+    },
+  ]);
+
+  const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([
+    {
+      id: 'msg-001',
+      thread_id: 'th-001',
+      sender_type: 'customer',
+      sender_name: 'คุณแพรว',
+      body: 'สวัสดีค่ะ ช่างเมย์มีคิวว่างช่วงเสาร์นี้ 14:00 น. ไหมคะ?',
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+    },
+    {
+      id: 'msg-002',
+      thread_id: 'th-001',
+      sender_type: 'ai',
+      sender_name: 'AI Support Assistant',
+      body: 'สวัสดีค่ะคุณแพรว ช่างเมย์มีคิว 14:30 น. ว่างค่ะ สนใจให้ประสานงานแอดมินคนจริงเพื่อล็อคคิวให้ทันทีเลยไหมคะ?',
+      created_at: new Date(Date.now() - 3500000).toISOString(),
+    },
+    {
+      id: 'msg-003',
+      thread_id: 'th-001',
+      sender_type: 'customer',
+      sender_name: 'คุณแพรว',
+      body: 'รบกวนขอคุยกับเจ้าหน้าที่คนจริงหน่อยค่ะ ขอบคุณค่ะ',
+      created_at: new Date(Date.now() - 1800000).toISOString(),
+    },
+  ]);
+
+  const [trainingAssignments, setTrainingAssignments] = useState<TrainingAssignment[]>([
+    {
+      id: 'asg-01',
+      course_id: 'course-salon-01',
+      course_title: 'SOP บริการทำสีผมออร์แกนิค & การวิเคราะห์สภาพหนังศีรษะ',
+      staff_id: 'emp-002',
+      staff_name: 'ช่างเมย์ (Master Stylist)',
+      status: 'in_progress',
+      progress: 75,
+      created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+    },
+  ]);
+
+  const handleSendSupportMessage = async (
+    threadId: string,
+    text: string,
+    senderType: 'agent' | 'ai' | 'customer',
+    senderName: string
+  ) => {
+    const newMsg: SupportMessage = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      thread_id: threadId,
+      sender_type: senderType,
+      sender_name: senderName,
+      body: text,
+      created_at: new Date().toISOString(),
+    };
+    setSupportMessages((prev) => [...prev, newMsg]);
+
+    try {
+      await supabase.from('customer_support_messages').insert({
+        id: newMsg.id,
+        thread_id: newMsg.thread_id,
+        body: newMsg.body,
+        sender_type: newMsg.sender_type,
+        created_at: newMsg.created_at,
+      });
+    } catch (err) {
+      console.warn('Support message cloud persistence notice:', err);
+    }
+  };
+
+  const handleTakeoverSupportThread = async (threadId: string, agentName: string) => {
+    setSupportThreads((prev) =>
+      prev.map((t) =>
+        t.id === threadId
+          ? { ...t, status: 'in_progress', mode: 'human', assigned_to_name: agentName }
+          : t
+      )
+    );
+
+    try {
+      await supabase
+        .from('customer_support_threads')
+        .update({
+          status: 'in_progress',
+          assigned_to: agentName,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', threadId);
+    } catch (err) {
+      console.warn('Support thread takeover cloud update notice:', err);
+    }
+  };
+
+  const handleResolveSupportThread = async (threadId: string, agentName: string) => {
+    setSupportThreads((prev) =>
+      prev.map((t) => (t.id === threadId ? { ...t, status: 'resolved' } : t))
+    );
+
+    try {
+      await supabase
+        .from('customer_support_threads')
+        .update({
+          status: 'resolved',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', threadId);
+    } catch (err) {
+      console.warn('Support thread resolve cloud update notice:', err);
+    }
+  };
+
+  const handleCompleteAssignment = async (assignmentId: string, score: number) => {
+    setTrainingAssignments((prev) =>
+      prev.map((a) =>
+        a.id === assignmentId
+          ? { ...a, status: 'completed', progress: 100, completed_date: new Date().toISOString() }
+          : a
+      )
+    );
+
+    try {
+      await supabase
+        .from('staff_training_assignments')
+        .update({
+          status: 'completed',
+          progress: score,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', assignmentId);
+    } catch (err) {
+      console.warn('Training assignment complete cloud update notice:', err);
+    }
+  };
+
+  const handleApproveRequest = (id: string, reviewerName: string) => {
+    setApprovals((prev) =>
+      prev.map((a) =>
+        a.id === id
+          ? { ...a, status: 'approved', reviewer_name: reviewerName, reviewed_at: new Date().toISOString() }
+          : a
+      )
+    );
+    handleSecurityAudit('APPROVAL_REQUEST_APPROVED', { requestId: id, reviewer: reviewerName });
+  };
+
+  const handleRejectRequest = (id: string, reviewerName: string, reason?: string) => {
+    setApprovals((prev) =>
+      prev.map((a) =>
+        a.id === id
+          ? { ...a, status: 'rejected', reviewer_name: reviewerName, rejection_reason: reason, reviewed_at: new Date().toISOString() }
+          : a
+      )
+    );
+    handleSecurityAudit('APPROVAL_REQUEST_REJECTED', { requestId: id, reviewer: reviewerName, reason });
+  };
 
   const handleAddStaffActivity = (act: Omit<StaffActivityLog, 'id' | 'timestamp'>) => {
     const newAct: StaffActivityLog = {
@@ -439,6 +629,66 @@ export default function App() {
               duration_minutes: s.duration_minutes || 60,
               price: Number(s.price || 0),
               active: s.active !== false,
+            }))
+          );
+        }
+
+        // Hydrate Support Threads from Supabase
+        const { data: dbThreads } = await supabase
+          .from('customer_support_threads')
+          .select('*')
+          .limit(20);
+        if (dbThreads && dbThreads.length > 0) {
+          setSupportThreads(
+            dbThreads.map((t: Record<string, unknown>) => ({
+              id: String(t.id),
+              organization_id: String(t.organization_id || TENANT_CONFIG.DEFAULT_ORG_ID),
+              customer_id: String(t.customer_id || 'cust-001'),
+              customer_name: 'ลูกค้า (Supabase)',
+              subject: 'ข้อความดูแลลูกค้า',
+              status: (t.status as SupportThread['status']) || 'open',
+              mode: 'human',
+              assigned_to: t.assigned_to ? String(t.assigned_to) : undefined,
+              created_at: String(t.created_at || new Date().toISOString()),
+              updated_at: String(t.updated_at || new Date().toISOString()),
+            }))
+          );
+        }
+
+        // Hydrate Support Messages from Supabase
+        const { data: dbMessages } = await supabase
+          .from('customer_support_messages')
+          .select('*')
+          .limit(50);
+        if (dbMessages && dbMessages.length > 0) {
+          setSupportMessages(
+            dbMessages.map((m: Record<string, unknown>) => ({
+              id: String(m.id),
+              thread_id: String(m.thread_id),
+              sender_type: (m.sender_type as SupportMessage['sender_type']) || 'customer',
+              body: String(m.body || ''),
+              created_at: String(m.created_at || new Date().toISOString()),
+            }))
+          );
+        }
+
+        // Hydrate Training Courses from Supabase
+        const { data: dbCourses } = await supabase
+          .from('staff_training_courses')
+          .select('*')
+          .limit(20);
+        if (dbCourses && dbCourses.length > 0) {
+          setTrainingCourses(
+            dbCourses.map((c: Record<string, unknown>) => ({
+              id: String(c.id),
+              code: `TRN-${String(c.id).slice(-4).toUpperCase()}`,
+              title: String(c.title || 'หลักสูตรอบรม'),
+              description: String(c.description || ''),
+              category: String(c.category || 'general'),
+              duration_minutes: 45,
+              modules_count: 3,
+              badge_name: 'Certified Specialist',
+              required_for_roles: ['service_staff' as UserRole, 'beauty_staff' as UserRole],
             }))
           );
         }
@@ -1307,6 +1557,54 @@ export default function App() {
 
             {currentView === 'system-health' && (
               <SystemHealthMonitor auditLogs={auditLogs} />
+            )}
+
+            {currentView === 'support' && (
+              <CustomerSupportWorkspace
+                currentRole={currentRole}
+                currentStaffName={currentStaffName}
+                customers={customers}
+                activeThreads={supportThreads}
+                messages={supportMessages}
+                onSendMessage={handleSendSupportMessage}
+                onTakeoverThread={handleTakeoverSupportThread}
+                onResolveThread={handleResolveSupportThread}
+              />
+            )}
+
+            {currentView === 'learning' && (
+              <StaffLearningWorkspace
+                currentStaffName={currentStaffName}
+                currentRole={currentRole}
+                courses={trainingCourses}
+                assignments={trainingAssignments}
+                onCompleteAssignment={handleCompleteAssignment}
+                onClockInToggle={() => {}}
+                isClockedIn={true}
+              />
+            )}
+
+            {currentView === 'owner-control' && (
+              <OwnerControlWorkspace
+                currentStaffName={currentStaffName}
+                currentRole={currentRole}
+                employees={employees}
+                approvals={approvals}
+                onApproveRequest={handleApproveRequest}
+                onRejectRequest={handleRejectRequest}
+                activities={staffActivities}
+                bookings={bookings}
+                sales={sales}
+                onNavigateToView={(view) => setCurrentView(view)}
+              />
+            )}
+
+            {currentView === 'owner-myapp' && (
+              <OwnerMyAppControl
+                currentTheme={currentTheme}
+                onChangeTheme={setCurrentTheme}
+                onSecurityAudit={handleSecurityAudit}
+              />
             )}
           </>
         )}

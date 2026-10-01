@@ -572,4 +572,88 @@ export interface PosCheckoutResponse {
   error?: string;
 }
 
+// ----------------------------------------------------
+// Customer Support Workspace (super_admin & customer)
+// ----------------------------------------------------
+export interface SupportThread {
+  id: string;
+  organization_id: string;
+  customer_id: string;
+  customer_name?: string;
+  customer_phone?: string;
+  subject: string;
+  status: 'open' | 'waiting_agent' | 'in_progress' | 'resolved' | 'closed';
+  mode: 'ai' | 'human';
+  assigned_to?: string;
+  assigned_to_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupportMessage {
+  id: string;
+  thread_id: string;
+  sender_type: 'customer' | 'ai' | 'agent';
+  sender_name?: string;
+  body: string;
+  created_at: string;
+}
+
+// ----------------------------------------------------
+// Staff Learning & Training Workspace (service_staff)
+// ----------------------------------------------------
+export interface TrainingModule {
+  id: string;
+  course_id: string;
+  title: string;
+  content_type?: 'sop' | 'video' | 'checklist' | 'quiz' | 'practice';
+  guide_text?: string;
+  video_url?: string;
+  checklist?: { id: string; label: string; completed: boolean }[];
+  quiz_questions?: { id: string; question: string; options: string[]; answer_index: number }[];
+  created_at: string;
+}
+
+export interface TrainingAssignment {
+  id: string;
+  course_id: string;
+  course_title?: string;
+  staff_id: string;
+  staff_name?: string;
+  status: 'assigned' | 'in_progress' | 'completed' | 'verified';
+  progress: number;
+  completed_at?: string;
+  verified_by?: string;
+  verified_at?: string;
+  score?: number;
+  created_at: string;
+}
+
+// ----------------------------------------------------
+// Owner-Only MyApp & System Control
+// ----------------------------------------------------
+export interface FeatureFlagConfig {
+  id: string;
+  name: string;
+  key: string;
+  enabled: boolean;
+  description: string;
+  category: 'pos' | 'customer' | 'salon' | 'marketing' | 'system';
+}
+
+export interface MyAppConfig {
+  appName: string;
+  companyName: string;
+  activeTheme: StyleGuideTheme;
+  navItems: { id: string; label: string; view: string; visible: boolean; roles: UserRole[] }[];
+  featureFlags: FeatureFlagConfig[];
+  aiAssistantSettings: {
+    marketingAiEnabled: boolean;
+    supportAiEnabled: boolean;
+    staffAiEnabled: boolean;
+    systemAiEnabled: boolean;
+    autoPublishAllowed: false; // STRICT: AI cannot publish without Owner approval
+  };
+}
+
 

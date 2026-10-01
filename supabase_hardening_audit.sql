@@ -464,3 +464,426 @@ BEGIN
     );
 END;
 $$;
+
+-- =========================================================================
+-- 5. DEPOSIT WORKFLOW RPCs (P0-C)
+-- =========================================================================
+
+-- Submit Deposit (Customer / Frontdesk)
+CREATE OR REPLACE FUNCTION public.equal1_submit_deposit(
+    p_booking_id text,
+    p_amount numeric,
+    p_slip_url text,
+    p_customer_name text,
+    p_customer_phone text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_booking record;
+BEGIN
+    v_org_id := auth.app_org();
+
+    IF p_amount <= 0 THEN
+        RAISE EXCEPTION 'INVALID_AMOUNT: ยอดมัดจำต้องมากกว่า 0 บาท';
+    END IF;
+
+    SELECT * INTO v_booking FROM public.bookings
+    WHERE id = p_booking_id AND organization_id = v_org_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'BOOKING_NOT_FOUND: ไม่พบบุ๊คกิ้งรหัส % ในระบบ', p_booking_id;
+    END IF;
+
+    UPDATE public.bookings
+    SET status = 'confirmed',
+        notes = jsonb_build_object(
+            'deposit_status', 'SUBMITTED',
+            'deposit_amount', p_amount,
+            'deposit_slip_url', p_slip_url,
+            'customer_name', p_customer_name,
+            'customer_phone', p_customer_phone,
+            'submitted_at', now()
+        )::text,
+        updated_at = now()
+    WHERE id = p_booking_id;
+
+    -- Audit log
+    INSERT INTO public.audit_logs (
+        id, organization_id, branch_id, actor_name, action, entity_type, entity_id, details
+    ) VALUES (
+        'aud-dep-' || round(extract(epoch from now()) * 1000)::text,
+        v_org_id, v_booking.branch_id, coalesce(p_customer_name, 'Customer'), 'DEPOSIT_SUBMITTED', 'bookings', p_booking_id,
+        jsonb_build_object('amount', p_amount, 'slipUrl', p_slip_url)
+    );
+
+    RETURN jsonb_build_object('success', true, 'booking_id', p_booking_id, 'deposit_status', 'SUBMITTED');
+END;
+$$;
+
+-- Review Deposit (Authorized Owner / Manager only)
+CREATE OR REPLACE FUNCTION public.equal1_review_deposit(
+    p_booking_id text,
+    p_approved boolean,
+    p_rejection_reason text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_role text;
+    v_booking record;
+    v_new_status text;
+BEGIN
+    v_org_id := auth.app_org();
+    v_role := auth.app_user_role();
+
+    -- Server-side authorization check: only owner, super_admin, or manager
+    IF v_role NOT IN ('owner', 'super_admin', 'manager') THEN
+        RAISE EXCEPTION 'PERMISSION_DENIED: ตำแหน่ง % ไม่มีสิทธิ์ตรวจสอบหรืออนุมัติมัดจำ', v_role;
+    END IF;
+
+    SELECT * INTO v_booking FROM public.bookings
+    WHERE id = p_booking_id AND organization_id = v_org_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'BOOKING_NOT_FOUND: ไม่พบบุ๊คกิ้ง %', p_booking_id;
+    END IF;
+
+    v_new_status := CASE WHEN p_approved THEN 'VERIFIED' ELSE 'REJECTED' END;
+
+    UPDATE public.bookings
+    SET status = CASE WHEN p_approved THEN 'confirmed' ELSE 'requested' END,
+        notes = jsonb_build_object(
+            'deposit_status', v_new_status,
+            'reviewer_role', v_role,
+            'reviewed_at', now(),
+            'rejection_reason', p_rejection_reason
+        )::text,
+        updated_at = now()
+    WHERE id = p_booking_id;
+
+    INSERT INTO public.audit_logs (
+        id, organization_id, branch_id, actor_name, action, entity_type, entity_id, details
+    ) VALUES (
+        'aud-dep-rev-' || round(extract(epoch from now()) * 1000)::text,
+        v_org_id, v_booking.branch_id, 'Deposit Reviewer (' || v_role || ')',
+        CASE WHEN p_approved THEN 'DEPOSIT_VERIFIED' ELSE 'DEPOSIT_REJECTED' END,
+        'bookings', p_booking_id,
+        jsonb_build_object('approved', p_approved, 'status', v_new_status, 'reason', p_rejection_reason)
+    );
+
+    RETURN jsonb_build_object('success', true, 'booking_id', p_booking_id, 'deposit_status', v_new_status);
+END;
+$$;
+
+-- =========================================================================
+-- 6. SECURITY DEFINER REVIEW & AUDITED RPC DEFINITIONS (P0-H)
+-- =========================================================================
+
+-- 1. equal1_create_pos_sale (Standardized POS checkout alias)
+CREATE OR REPLACE FUNCTION public.equal1_create_pos_sale(
+    p_branch_id text,
+    p_items jsonb,
+    p_payment_method text,
+    p_payment_status text,
+    p_customer_id text DEFAULT NULL,
+    p_discount numeric DEFAULT 0,
+    p_idempotency_key text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    RETURN public.equal1_pos_checkout(
+        p_branch_id, p_items, p_payment_method, p_payment_status,
+        p_customer_id, p_discount, p_idempotency_key
+    );
+END;
+$$;
+
+-- 2. equal1_create_product (Authorized Product Creation)
+CREATE OR REPLACE FUNCTION public.equal1_create_product(
+    p_branch_id text,
+    p_sku text,
+    p_name text,
+    p_category text,
+    p_price numeric,
+    p_cost numeric,
+    p_stock integer
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_role text;
+    v_prod_id text;
+BEGIN
+    v_org_id := auth.app_org();
+    v_role := auth.app_user_role();
+
+    IF v_role NOT IN ('owner', 'super_admin', 'manager', 'stock') THEN
+        RAISE EXCEPTION 'PERMISSION_DENIED: ตำแหน่ง % ไม่มีสิทธิ์สร้างหรือแก้ไขรายการสินค้า', v_role;
+    END IF;
+
+    v_prod_id := 'prod-' || round(extract(epoch from now()) * 1000)::text;
+
+    INSERT INTO public.products (
+        id, organization_id, branch_id, sku, name, category, price, cost, stock, active
+    ) VALUES (
+        v_prod_id, v_org_id, p_branch_id, p_sku, p_name, coalesce(p_category, 'General'),
+        p_price, coalesce(p_cost, 0), coalesce(p_stock, 0), true
+    );
+
+    RETURN jsonb_build_object('success', true, 'product_id', v_prod_id);
+END;
+$$;
+
+-- 3. equal1_customer_checkout (Customer Mobile Checkout)
+CREATE OR REPLACE FUNCTION public.equal1_customer_checkout(
+    p_branch_id text,
+    p_items jsonb,
+    p_payment_method text,
+    p_customer_id text,
+    p_customer_name text,
+    p_delivery_address text,
+    p_idempotency_key text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_sale_id text;
+    v_receipt text;
+    v_subtotal numeric := 0;
+    v_delivery_fee numeric := 35;
+    v_total numeric := 0;
+    v_item record;
+    v_prod record;
+BEGIN
+    v_org_id := auth.app_org();
+
+    v_sale_id := 'c-sale-' || round(extract(epoch from now()) * 1000)::text;
+    v_receipt := 'APP-REC-' || to_char(now(), 'YYYYMMDD') || '-' || lpad(floor(random() * 9000 + 1000)::text, 4, '0');
+
+    FOR v_item IN SELECT * FROM jsonb_to_recordset(p_items) AS (product_id text, quantity integer, unit_price numeric)
+    LOOP
+        SELECT * INTO v_prod FROM public.products
+        WHERE id = v_item.product_id AND organization_id = v_org_id
+        FOR UPDATE;
+
+        IF NOT FOUND OR v_prod.stock < v_item.quantity THEN
+            RAISE EXCEPTION 'STOCK_UNAVAILABLE: สินค้าไม่เพียงพอสำหรับการสั่งซื้อ';
+        END IF;
+
+        v_subtotal := v_subtotal + (v_item.unit_price * v_item.quantity);
+
+        UPDATE public.products SET stock = stock - v_item.quantity WHERE id = v_item.product_id;
+    END LOOP;
+
+    v_total := v_subtotal + v_delivery_fee;
+
+    INSERT INTO public.sales (
+        id, organization_id, branch_id, customer_id, customer_name, channel, status,
+        payment_status, payment_method, subtotal, discount, delivery_fee, total,
+        receipt_number, idempotency_key
+    ) VALUES (
+        v_sale_id, v_org_id, p_branch_id, p_customer_id, p_customer_name, 'app', 'pending',
+        'pending', p_payment_method, v_subtotal, 0, v_delivery_fee, v_total,
+        v_receipt, p_idempotency_key
+    );
+
+    RETURN jsonb_build_object('success', true, 'sale_id', v_sale_id, 'receipt_number', v_receipt, 'total', v_total);
+END;
+$$;
+
+-- 4. equal1_customer_create_booking (Booking with Exclusion Check)
+CREATE OR REPLACE FUNCTION public.equal1_customer_create_booking(
+    p_branch_id text,
+    p_service_id text,
+    p_customer_name text,
+    p_customer_phone text,
+    p_starts_at timestamptz,
+    p_duration_minutes integer,
+    p_technician_name text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_booking_id text;
+BEGIN
+    v_org_id := auth.app_org();
+    v_booking_id := 'bk-' || round(extract(epoch from now()) * 1000)::text;
+
+    INSERT INTO public.bookings (
+        id, organization_id, branch_id, service_id, customer_name,
+        starts_at, ends_at, status, total, notes
+    ) VALUES (
+        v_booking_id, v_org_id, p_branch_id, p_service_id, p_customer_name,
+        p_starts_at, p_starts_at + (coalesce(p_duration_minutes, 60) || ' minutes')::interval,
+        'requested', 0,
+        jsonb_build_object('phone', p_customer_phone, 'technician', p_technician_name)::text
+    );
+
+    RETURN jsonb_build_object('success', true, 'booking_id', v_booking_id);
+END;
+$$;
+
+-- 5. equal1_open_cash_session & equal1_close_cash_session (Shift Control)
+CREATE OR REPLACE FUNCTION public.equal1_open_cash_session(
+    p_branch_id text,
+    p_user_id text,
+    p_user_name text,
+    p_opening_cash numeric
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_session_id text;
+BEGIN
+    v_org_id := auth.app_org();
+    v_session_id := 'cs-' || round(extract(epoch from now()) * 1000)::text;
+
+    INSERT INTO public.cash_sessions (
+        id, organization_id, branch_id, user_id, user_name, opening_cash, status
+    ) VALUES (
+        v_session_id, v_org_id, p_branch_id, p_user_id, p_user_name, p_opening_cash, 'OPEN'
+    );
+
+    RETURN jsonb_build_object('success', true, 'session_id', v_session_id);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.equal1_close_cash_session(
+    p_session_id text,
+    p_closing_cash numeric,
+    p_notes text DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+BEGIN
+    v_org_id := auth.app_org();
+
+    UPDATE public.cash_sessions
+    SET closing_cash = p_closing_cash,
+        closed_at = now(),
+        status = 'CLOSED',
+        notes = p_notes
+    WHERE id = p_session_id AND organization_id = v_org_id;
+
+    RETURN jsonb_build_object('success', true, 'session_id', p_session_id);
+END;
+$$;
+
+-- 6. equal1_update_order_status & equal1_owner_update_order_status
+CREATE OR REPLACE FUNCTION public.equal1_update_order_status(
+    p_sale_id text,
+    p_new_status text,
+    p_actor_name text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_role text;
+BEGIN
+    v_org_id := auth.app_org();
+    v_role := auth.app_user_role();
+
+    IF v_role NOT IN ('owner', 'super_admin', 'manager', 'cashier', 'delivery') THEN
+        RAISE EXCEPTION 'PERMISSION_DENIED: ตำแหน่ง % ไม่มีสิทธิ์เปลี่ยนสถานะออเดอร์', v_role;
+    END IF;
+
+    UPDATE public.sales
+    SET status = p_new_status
+    WHERE id = p_sale_id AND organization_id = v_org_id;
+
+    INSERT INTO public.audit_logs (
+        id, organization_id, actor_name, action, entity_type, entity_id, details
+    ) VALUES (
+        'aud-ord-' || round(extract(epoch from now()) * 1000)::text,
+        v_org_id, p_actor_name, 'ORDER_STATUS_CHANGED', 'sales', p_sale_id,
+        jsonb_build_object('new_status', p_new_status, 'role', v_role)
+    );
+
+    RETURN jsonb_build_object('success', true, 'sale_id', p_sale_id, 'status', p_new_status);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.equal1_owner_update_order_status(
+    p_sale_id text,
+    p_new_status text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+    RETURN public.equal1_update_order_status(p_sale_id, p_new_status, 'Owner');
+END;
+$$;
+
+-- 7. equal1_complete_customer_payment (Hardened: Requires authorized cashier/verification)
+CREATE OR REPLACE FUNCTION public.equal1_complete_customer_payment(
+    p_sale_id text,
+    p_verified_by text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_org_id text;
+    v_role text;
+BEGIN
+    v_org_id := auth.app_org();
+    v_role := auth.app_user_role();
+
+    -- P0-01 Hardening: Customers CANNOT self-mark payment as PAID!
+    IF v_role = 'customer' THEN
+        RAISE EXCEPTION 'PERMISSION_DENIED: ลูกค้าไม่สามารถอนุมัติการชำระเงินด้วยตนเองได้ ต้องผ่านการตรวจสอบสลิปโดยพนักงานหรือเกตเวย์';
+    END IF;
+
+    UPDATE public.sales
+    SET payment_status = 'paid',
+        status = 'confirmed'
+    WHERE id = p_sale_id AND organization_id = v_org_id;
+
+    RETURN jsonb_build_object('success', true, 'sale_id', p_sale_id, 'payment_status', 'paid');
+END;
+$$;

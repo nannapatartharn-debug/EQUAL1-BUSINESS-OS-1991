@@ -390,9 +390,59 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <span>ตรวจสลิป</span>
               </button>
 
+              {/* CUSTOMER SUPPORT WORKSPACE */}
+              <button
+                onClick={() => onSelectView('support')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-medium transition cursor-pointer ${
+                  currentView === 'support'
+                    ? 'bg-[#1F1F1F] text-white shadow-sm'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10'
+                }`}
+              >
+                <Briefcase className="w-4 h-4 text-sky-500" />
+                <span>แชทดูแลลูกค้า</span>
+              </button>
+
+              {/* STAFF LEARNING & SOP WORKSPACE */}
+              <button
+                onClick={() => onSelectView('learning')}
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-medium transition cursor-pointer ${
+                  currentView === 'learning'
+                    ? 'bg-[#1F1F1F] text-white shadow-sm'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10'
+                }`}
+              >
+                <Coffee className="w-4 h-4 text-amber-500" />
+                <span>อบรม &amp; SOP</span>
+              </button>
+
               {/* OWNER-ONLY TABS */}
               {isOwnerAuthenticated && (
                 <>
+                  <button
+                    onClick={() => onSelectView('owner-control')}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-medium transition cursor-pointer ${
+                      currentView === 'owner-control'
+                        ? 'bg-[#1F1F1F] text-white shadow-sm'
+                        : 'text-gray-700 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    <Shield className="w-4 h-4 text-amber-400" />
+                    <span>ศูนย์สั่งการ &amp; อนุมัติ</span>
+                  </button>
+
+                  <button
+                    onClick={() => onSelectView('owner-myapp')}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-medium transition cursor-pointer ${
+                      currentView === 'owner-myapp'
+                        ? 'bg-[#1F1F1F] text-white shadow-sm'
+                        : 'text-gray-700 dark:text-gray-300 hover:bg-black/5 dark:hover:bg-white/10'
+                    }`}
+                  >
+                    <Zap className="w-4 h-4 text-indigo-400" />
+                    <span>MyApp &amp; ควบคุม AI</span>
+                  </button>
+
                   <button
                     onClick={() => onSelectView('finance')}
                     className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl font-medium transition cursor-pointer ${

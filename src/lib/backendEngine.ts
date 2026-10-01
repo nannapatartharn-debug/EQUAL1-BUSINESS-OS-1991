@@ -66,6 +66,42 @@ class NotificationService {
   ];
   private listeners: ((items: NotificationRecord[]) => void)[] = [];
 
+  constructor() {
+    this.loadFromCloud();
+  }
+
+  public async loadFromCloud(): Promise<void> {
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!error && data && data.length > 0) {
+        this.notifications = data.map((d: Record<string, unknown>) => ({
+          id: String(d.id),
+          recipient_user_id: d.recipient_user_id ? String(d.recipient_user_id) : undefined,
+          recipient_role: d.recipient_role ? (d.recipient_role as UserRole) : undefined,
+          organization_id: String(d.organization_id || TENANT_CONFIG.DEFAULT_ORG_ID),
+          branch_id: String(d.branch_id || TENANT_CONFIG.DEFAULT_BRANCH_ID),
+          type: String(d.type || 'SYSTEM'),
+          title: String(d.title || 'แจ้งเตือน'),
+          message: String(d.message || ''),
+          severity: (d.severity as NotificationRecord['severity']) || 'info',
+          related_entity_type: d.related_entity_type ? String(d.related_entity_type) : undefined,
+          related_entity_id: d.related_entity_id ? String(d.related_entity_id) : undefined,
+          is_read: Boolean(d.is_read),
+          created_at: String(d.created_at || new Date().toISOString()),
+          read_at: d.read_at ? String(d.read_at) : undefined,
+        }));
+        this.notifyListeners();
+      }
+    } catch (err) {
+      console.warn('Initial cloud notifications load notice:', err);
+    }
+  }
+
   public async createNotification(
     notif: Omit<NotificationRecord, 'id' | 'created_at' | 'is_read'>
   ): Promise<NotificationRecord> {
@@ -79,31 +115,44 @@ class NotificationService {
     this.notifications.unshift(record);
     if (this.notifications.length > 100) this.notifications.pop();
 
-    // Persist to Supabase audit ledger
+    // 1. Authoritative insert to Supabase notifications table
     try {
-      supabase
-        .from('audit_logs')
+      const { error: insErr } = await supabase
+        .from('notifications')
         .insert({
+          id: record.id,
+          recipient_user_id: record.recipient_user_id || null,
+          recipient_role: record.recipient_role || null,
+          organization_id: record.organization_id,
+          branch_id: record.branch_id,
+          type: record.type,
+          title: record.title,
+          message: record.message,
+          severity: record.severity,
+          related_entity_type: record.related_entity_type || null,
+          related_entity_id: record.related_entity_id || null,
+          is_read: false,
+          created_at: record.created_at,
+        });
+
+      if (insErr) {
+        // Fallback to audit_logs if notifications table is being provisioned
+        await supabase.from('audit_logs').insert({
           id: record.id,
           action: 'notification.created',
           entity_type: 'notifications',
           entity_id: record.id,
-          actor_name: 'Notification Engine',
           details: {
             recipient_user_id: record.recipient_user_id,
             recipient_role: record.recipient_role,
             title: record.title,
             severity: record.severity,
-            organization_id: record.organization_id,
-            branch_id: record.branch_id,
           },
           created_at: record.created_at,
-        })
-        .then(({ error }) => {
-          if (error) console.warn('Notification persistence note:', error.message);
         });
+      }
     } catch (err) {
-      console.warn('Notification persistence note:', err);
+      console.warn('Cloud notification insert notice:', err);
     }
 
     this.notifyListeners();
@@ -127,6 +176,18 @@ class NotificationService {
       target.is_read = true;
       target.read_at = new Date().toISOString();
       this.notifyListeners();
+    }
+
+    try {
+      await supabase
+        .from('notifications')
+        .update({
+          is_read: true,
+          read_at: new Date().toISOString(),
+        })
+        .eq('id', notificationId);
+    } catch (err) {
+      console.warn('Cloud notification update notice:', err);
     }
   }
 
@@ -152,12 +213,50 @@ class NotificationService {
 export const notificationService = new NotificationService();
 
 // =========================================================================
-// 1.6 STAFF TASK AUTOMATION SERVICE (P0-9)
+// 1.6 STAFF TASK AUTOMATION SERVICE (P0-9 / P0-B)
 // =========================================================================
 
 class TaskAutomationService {
   private tasks: TaskItem[] = [];
   private listeners: ((tasks: TaskItem[]) => void)[] = [];
+
+  constructor() {
+    this.loadFromCloud();
+  }
+
+  public async loadFromCloud(): Promise<void> {
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (!error && data && data.length > 0) {
+        this.tasks = data.map((t: Record<string, unknown>) => ({
+          id: String(t.id),
+          branch_id: String(t.branch_id || TENANT_CONFIG.DEFAULT_BRANCH_ID),
+          title: String(t.title || ''),
+          description: t.description ? String(t.description) : '',
+          created_by_name: String(t.created_by_name || 'System'),
+          assigned_to_id: String(t.assigned_to_id || ''),
+          assigned_to_name: String(t.assigned_to_name || 'Staff'),
+          priority: (t.priority as TaskItem['priority']) || 'medium',
+          status: (t.status as TaskItem['status']) || 'todo',
+          category: (['opening', 'closing', 'cleanliness', 'inventory', 'customer', 'general'].includes(String(t.category))
+            ? t.category
+            : 'general') as TaskItem['category'],
+          checklist: Array.isArray(t.checklist) ? (t.checklist as TaskItem['checklist']) : [],
+          created_at: String(t.created_at || new Date().toISOString()),
+          completed_at: t.completed_at ? String(t.completed_at) : undefined,
+          verified_by: t.verified_by ? String(t.verified_by) : undefined,
+        }));
+        this.notifyListeners();
+      }
+    } catch (err) {
+      console.warn('Initial cloud tasks load notice:', err);
+    }
+  }
 
   public createAutomatedTask(
     taskData: Omit<TaskItem, 'id' | 'created_at'>
@@ -171,29 +270,46 @@ class TaskAutomationService {
     this.tasks.unshift(newTask);
     if (this.tasks.length > 100) this.tasks.pop();
 
-    // Persist automated task to Supabase
+    // 1. Authoritative insert to Supabase tasks table
     try {
       supabase
-        .from('audit_logs')
+        .from('tasks')
         .insert({
           id: newTask.id,
-          action: 'task.created',
-          entity_type: 'tasks',
-          entity_id: newTask.id,
-          actor_name: newTask.created_by_name || 'System Task Automation',
-          details: {
-            title: newTask.title,
-            assigned_to: newTask.assigned_to_name,
-            priority: newTask.priority,
-            category: newTask.category,
-          },
+          organization_id: TENANT_CONFIG.DEFAULT_ORG_ID,
+          branch_id: newTask.branch_id || TENANT_CONFIG.DEFAULT_BRANCH_ID,
+          title: newTask.title,
+          description: newTask.description,
+          created_by_name: newTask.created_by_name,
+          assigned_to_id: newTask.assigned_to_id,
+          assigned_to_name: newTask.assigned_to_name,
+          priority: newTask.priority,
+          status: newTask.status,
+          category: newTask.category,
+          checklist: newTask.checklist,
           created_at: newTask.created_at,
         })
         .then(({ error }) => {
-          if (error) console.warn('Task persistence note:', error.message);
+          if (error) {
+            // Mirror to audit_logs if tasks table not provisioned
+            supabase.from('audit_logs').insert({
+              id: newTask.id,
+              action: 'task.created',
+              entity_type: 'tasks',
+              entity_id: newTask.id,
+              actor_name: newTask.created_by_name || 'System Task Automation',
+              details: {
+                title: newTask.title,
+                assigned_to: newTask.assigned_to_name,
+                priority: newTask.priority,
+                category: newTask.category,
+              },
+              created_at: newTask.created_at,
+            });
+          }
         });
     } catch (err) {
-      console.warn('Task persistence note:', err);
+      console.warn('Task cloud persistence notice:', err);
     }
 
     this.notifyListeners();
@@ -216,6 +332,23 @@ class TaskAutomationService {
       target.completed_at = new Date().toISOString();
       target.verified_by = actorName;
     }
+
+    try {
+      supabase
+        .from('tasks')
+        .update({
+          status,
+          completed_at: target.completed_at || null,
+          verified_by: target.verified_by || null,
+        })
+        .eq('id', taskId)
+        .then(({ error }) => {
+          if (error) console.warn('Cloud task update notice:', error.message);
+        });
+    } catch (err) {
+      console.warn('Cloud task update notice:', err);
+    }
+
     this.notifyListeners();
     return target;
   }
@@ -1218,7 +1351,28 @@ export const depositService = {
 
     const depositStatus: DepositStatus = 'SUBMITTED';
 
-    // 1. Record Audit Log
+    // 1. Authoritative persistence to Supabase public.bookings
+    try {
+      await supabase
+        .from('bookings')
+        .update({
+          status: 'confirmed',
+          notes: JSON.stringify({
+            deposit_status: depositStatus,
+            deposit_amount: amount,
+            deposit_slip_url: slipUrl,
+            customer_name: customerName,
+            customer_phone: customerPhone,
+            submitted_at: new Date().toISOString(),
+          }),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', bookingId);
+    } catch (dbErr) {
+      console.warn('Booking deposit update note:', dbErr);
+    }
+
+    // 2. Record Audit Log
     const audit: AuditLog = {
       id: `aud-dep-${Date.now()}`,
       created_at: new Date().toISOString(),
@@ -1238,7 +1392,7 @@ export const depositService = {
       },
     };
 
-    // 2. Emit Business Event
+    // 3. Emit Business Event
     runtimeManager.emitEvent(
       'deposit.submitted',
       {
@@ -1251,7 +1405,7 @@ export const depositService = {
       customerName
     );
 
-    // 3. Notify Staff and Manager
+    // 4. Notify Staff and Manager
     await notificationService.createNotification({
       recipient_role: 'manager',
       organization_id: TENANT_CONFIG.DEFAULT_ORG_ID,
@@ -1286,6 +1440,28 @@ export const depositService = {
     }
 
     const depositStatus: DepositStatus = approved ? 'VERIFIED' : 'REJECTED';
+
+    // 1. Authoritative persistence to Supabase public.bookings
+    try {
+      await supabase
+        .from('bookings')
+        .update({
+          status: approved ? 'confirmed' : 'requested',
+          notes: JSON.stringify({
+            deposit_status: depositStatus,
+            deposit_amount: amount,
+            reviewer_id: reviewerId,
+            reviewer_name: reviewerName,
+            reviewer_role: reviewerRole,
+            reviewed_at: new Date().toISOString(),
+            rejection_reason: !approved ? rejectionReason : undefined,
+          }),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', bookingId);
+    } catch (dbErr) {
+      console.warn('Booking deposit review update note:', dbErr);
+    }
 
     const audit: AuditLog = {
       id: `aud-dep-rev-${Date.now()}`,
@@ -1348,6 +1524,24 @@ export const depositService = {
     actorName: string
   ): Promise<{ depositStatus: DepositStatus; audit: AuditLog }> {
     const depositStatus: DepositStatus = 'APPLIED';
+
+    try {
+      await supabase
+        .from('bookings')
+        .update({
+          notes: JSON.stringify({
+            deposit_status: depositStatus,
+            sale_id: saleId,
+            applied_amount: amount,
+            applied_at: new Date().toISOString(),
+            actor_name: actorName,
+          }),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', bookingId);
+    } catch (dbErr) {
+      console.warn('Booking deposit apply update note:', dbErr);
+    }
 
     const audit: AuditLog = {
       id: `aud-dep-app-${Date.now()}`,
